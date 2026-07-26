@@ -965,6 +965,7 @@ const Chat: React.FC = () => {
             if (xhsFullMatch || xhsShortMatch) {
                 let noteId = xhsFullMatch?.[1] || '';
                 let xsecToken = text.match(/xsec_token=([^&\s]+)/)?.[1];
+                let xsecSource = text.match(/xsec_source=([^&\s]+)/)?.[1];
                 let shortLinkError = '';
                 // 短链（xhslink.com）不含 id/token —— 先经 sfworker 展开成真实链接再提取。
                 if (!noteId && xhsShortMatch) {
@@ -974,6 +975,7 @@ const Chat: React.FC = () => {
                         const finalUrl = await expandShortUrl(shortUrl);
                         noteId = finalUrl.match(/(?:discovery\/item|explore|item)\/([a-f0-9]{24})/)?.[1] || '';
                         xsecToken = xsecToken || finalUrl.match(/xsec_token=([^&\s]+)/)?.[1];
+                        xsecSource = xsecSource || finalUrl.match(/xsec_source=([^&\s]+)/)?.[1];
                         if (isDevDebugAvailable()) console.log('[卡片调试] 小红书短链展开 →', finalUrl, '| noteId =', noteId);
                     } catch (e) {
                         console.warn('xhslink 短链展开失败:', e);
@@ -987,17 +989,19 @@ const Chat: React.FC = () => {
                 // 拿不到 noteId（短链展开失败/被挡）就不建空卡，保留原文给用户，并明确
                 // 告诉用户如何排查。此前这里完全静默，表现就是“角色能分享、用户分享不了”。
                 if (noteId) {
+                    const linkXsecSource = xsecSource || (xsecToken ? 'pc_share' : undefined);
+                    const webUrl = `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${encodeURIComponent(xsecToken)}${linkXsecSource ? `&xsec_source=${encodeURIComponent(linkXsecSource)}` : ''}` : ''}`;
                     // 基础卡数据来自分享文案，零后端依赖。
                     let note: any = {
                         noteId, title: titleFromText || '', desc: '', author: '',
-                        authorId: '', likes: 0, xsecToken,
+                        authorId: '', likes: 0, xsecToken, xsecSource: linkXsecSource, webUrl,
                     };
 
                     // 有小红书 MCP/Lite 才抓详情补全（正文/封面/作者/赞数）。
                     const mcpUrl = realtimeConfig?.xhsMcpConfig?.serverUrl;
                     if (mcpUrl && realtimeConfig?.xhsMcpConfig?.enabled) {
                         try {
-                            const noteUrl = `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${xsecToken}&xsec_source=pc_share` : ''}`;
+                            const noteUrl = webUrl;
                             // loadAllComments：和角色自己浏览笔记 (XHS_DETAIL) 一致地把评论区也抓回来，
                             // 否则 user 分享的笔记只有标题/正文，角色读不到评论（char 分享给 user 的却能看到）。
                             const result = await XhsMcpClient.getNoteDetail(mcpUrl, noteUrl, xsecToken, { loadAllComments: true });
@@ -1008,7 +1012,7 @@ const Chat: React.FC = () => {
                                 const noteObj = dataRoot?.note || (result.data as any)?.note || result.data;
                                 const fetched = normalizeNote(noteObj);
                                 // 抓到的字段补全基础卡；id/标题/token 保底，标题优先文案标题（更完整可读）。
-                                note = { ...note, ...fetched, noteId: fetched.noteId || note.noteId, title: titleFromText || fetched.title || note.title, xsecToken: fetched.xsecToken || xsecToken };
+                                note = { ...note, ...fetched, noteId: fetched.noteId || note.noteId, title: titleFromText || fetched.title || note.title, xsecToken: fetched.xsecToken || xsecToken, xsecSource: fetched.xsecSource || note.xsecSource, webUrl: fetched.webUrl || note.webUrl };
                                 // normalizeNote 只保留笔记基础字段会丢掉评论 —— 单独解包评论挂回卡片，
                                 // 让角色读 context 时也能看到评论区（与 char 浏览/分享笔记对齐）。
                                 const rawComments = dataRoot?.comments?.list || dataRoot?.comments

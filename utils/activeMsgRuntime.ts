@@ -67,6 +67,7 @@ function activeMsgTrace(event: string, details: Record<string, unknown> = {}): v
 export const pushXhsCaches: XhsCaches = {
   xsecTokenCache: new Map(),
   noteTitleCache: new Map(),
+  xsecSourceCache: new Map(),
   commentUserIdCache: new Map(),
   commentAuthorNameCache: new Map(),
   commentParentIdCache: new Map(),
@@ -194,6 +195,9 @@ const processInboxMessageWithPostProcessing = async (message: ActiveMsg2InboxMes
         pushLastXhsNotesRef.current = persisted.notes as XhsNote[];
         for (const [noteId, token] of (persisted.xsecTokens || [])) {
           pushXhsCaches.xsecTokenCache.set(noteId, token);
+        }
+        for (const [noteId, source] of (persisted.xsecSources || [])) {
+          pushXhsCaches.xsecSourceCache?.set(noteId, source);
         }
       }
     } catch (e) {

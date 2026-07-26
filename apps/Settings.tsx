@@ -11,7 +11,7 @@ import { NotionManager, FeishuManager, RealtimeContextManager, fetchOwmWeather, 
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, setLuckinEnabled as saveLuckinEnabled, testLuckinConnection, resetLuckinSession } from '../utils/luckinMcpClient';
-import { getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
+import { getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER, rewriteXhsLiteServerUrl } from '../utils/proxyWorker';
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
 import { DATE_VOICE_GUIDE } from '../utils/datePrompts';
@@ -959,6 +959,19 @@ const Settings: React.FC = () => {
       setShowCloudModal(false);
   };
 
+  const syncXhsLiteWorkerUrl = (previousWorkerUrl: string, nextWorkerUrl: string) => {
+      const xhsConfig = realtimeConfig.xhsMcpConfig;
+      const nextXhsUrl = rewriteXhsLiteServerUrl(xhsConfig?.serverUrl, previousWorkerUrl, nextWorkerUrl);
+      if (xhsConfig?.serverUrl && nextXhsUrl && nextXhsUrl !== xhsConfig.serverUrl) {
+          updateRealtimeConfig({
+              xhsMcpConfig: {
+                  ...xhsConfig,
+                  serverUrl: nextXhsUrl,
+              },
+          });
+      }
+  };
+
   // 保存 / 恢复主代理 Worker 地址
   const handleSaveProxyWorker = () => {
       const raw = proxyWorkerInput.trim();
@@ -966,15 +979,20 @@ const Settings: React.FC = () => {
           addToast('地址必须以 http:// 或 https:// 开头', 'error');
           return;
       }
+      const previous = getProxyWorkerUrl();
       setProxyWorkerUrl(raw);                 // 传空 / 默认地址 → 自动回落默认
       const applied = getProxyWorkerUrl();
       setProxyWorkerInput(applied);
+      syncXhsLiteWorkerUrl(previous, applied);
       addToast(applied === DEFAULT_PROXY_WORKER ? '已恢复为默认 Worker' : 'Worker 地址已保存', 'success');
   };
 
   const handleResetProxyWorker = () => {
+      const previous = getProxyWorkerUrl();
       setProxyWorkerUrl('');
-      setProxyWorkerInput(getProxyWorkerUrl());
+      const applied = getProxyWorkerUrl();
+      setProxyWorkerInput(applied);
+      syncXhsLiteWorkerUrl(previous, applied);
       addToast('已恢复为默认 Worker', 'info');
   };
 

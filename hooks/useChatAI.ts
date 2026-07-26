@@ -642,6 +642,8 @@ export const useChatAI = ({
     const xsecTokenCacheRef = useRef<Map<string, string>>(new Map());
     // noteId→title 缓存，用于 detail 失败时重新搜索拿新 token
     const noteTitleCacheRef = useRef<Map<string, string>>(new Map());
+    // noteId→xsec_source 缓存，detail 需要和搜索/浏览来源匹配
+    const xsecSourceCacheRef = useRef<Map<string, string>>(new Map());
     // commentId→userId 缓存，reply_comment 需要 user_id 帮助 MCP 服务端定位评论
     const commentUserIdCacheRef = useRef<Map<string, string>>(new Map());
     // commentId→authorName 缓存，reply 降级为顶级评论时用 @authorName 让回复有上下文
@@ -1512,6 +1514,7 @@ export const useChatAI = ({
             const xhsCaches: XhsCaches = {
                 xsecTokenCache: xsecTokenCacheRef.current,
                 noteTitleCache: noteTitleCacheRef.current,
+                xsecSourceCache: xsecSourceCacheRef.current,
                 commentUserIdCache: commentUserIdCacheRef.current,
                 commentAuthorNameCache: commentAuthorNameCacheRef.current,
                 commentParentIdCache: commentParentIdCacheRef.current,

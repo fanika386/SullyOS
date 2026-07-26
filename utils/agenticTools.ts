@@ -25,6 +25,7 @@ import { getLocalDateKey } from './localDate';
 export interface XhsCaches {
     xsecTokenCache: Map<string, string>;
     noteTitleCache: Map<string, string>;
+    xsecSourceCache?: Map<string, string>;
     commentUserIdCache: Map<string, string>;
     commentAuthorNameCache: Map<string, string>;
     commentParentIdCache: Map<string, string>;
@@ -302,6 +303,7 @@ function cacheXsecTokensImpl(caches: XhsCaches | undefined, notes: XhsNote[]): v
     for (const n of notes) {
         if (n.noteId && n.xsecToken) caches.xsecTokenCache.set(n.noteId, n.xsecToken);
         if (n.noteId && n.title) caches.noteTitleCache.set(n.noteId, n.title);
+        if (n.noteId && n.xsecSource) caches.xsecSourceCache?.set(n.noteId, n.xsecSource);
     }
 }
 
@@ -310,6 +312,41 @@ function findXsecToken(caches: XhsCaches | undefined, lastXhsNotes: XhsNote[], n
     const fromNotes = lastXhsNotes.find(n => n.noteId === noteId)?.xsecToken;
     if (fromNotes) return fromNotes;
     return caches?.xsecTokenCache.get(noteId);
+}
+
+function findXsecSource(caches: XhsCaches | undefined, lastXhsNotes: XhsNote[], noteId: string): string | undefined {
+    const fromNotes = lastXhsNotes.find(n => n.noteId === noteId)?.xsecSource;
+    if (fromNotes) return fromNotes;
+    return caches?.xsecSourceCache?.get(noteId);
+}
+
+function extractDetailPayload(detailData: any): { note: any; comments: any[]; commentsError?: string } {
+    const innerData = detailData?.data && typeof detailData.data === 'object' ? detailData.data : null;
+    const note = innerData?.note || detailData?.note || detailData || {};
+    const rawComments = innerData?.comments?.list || innerData?.comments
+        || detailData?.comments?.list || detailData?.comments
+        || note.comments?.list || note.comments || [];
+    const comments = Array.isArray(rawComments) ? rawComments : [];
+    const commentsError = innerData?.comments?.error || detailData?.comments_error || detailData?.commentsError;
+    return { note, comments, commentsError };
+}
+
+function isBlankXhsDetailData(detailData: any): boolean {
+    if (!detailData) return true;
+    if (typeof detailData === 'string') return detailData.trim().length === 0;
+    const { note, comments, commentsError } = extractDetailPayload(detailData);
+    const title = note.title || note.displayTitle || note.display_title || '';
+    const desc = note.desc || note.description || note.content || '';
+    const author = note.user?.nickname || note.author || note.nickname || '';
+    const images = note.image_list || note.imageList || [];
+    return !title && !desc && !author && comments.length === 0 && !commentsError
+        && (!Array.isArray(images) || images.length === 0);
+}
+
+function detailFailureMessage(detailData: any): string {
+    const rawError = detailData?.raw_error || detailData?.rawError || detailData?.data?.raw_error;
+    const msg = detailData?.msg || detailData?.message || rawError?.msg || rawError?.message;
+    return `小红书返回了空详情。可能是 xsec_token / xsec_source 失效、noteId 来源不匹配、帖子权限限制，或接口被风控。${msg ? `上游提示: ${String(msg).slice(0, 180)}` : ''}`;
 }
 
 // ─── XHS_SEARCH ─────────────────────────────────────────────────────────────
@@ -482,11 +519,12 @@ export async function runXhsDetail(
 
     const lastNotes = ctx.lastXhsNotesRef?.current ?? [];
     let xsecToken = findXsecToken(ctx.xhsCaches, lastNotes, args.noteId);
-    console.log(`📕 [XHS] AI要查看笔记详情:`, args.noteId, xsecToken ? '(有xsecToken)' : '(无xsecToken)');
+    let xsecSource = findXsecSource(ctx.xhsCaches, lastNotes, args.noteId);
+    console.log(`📕 [XHS] AI要查看笔记详情:`, args.noteId, xsecToken ? '(有xsecToken)' : '(无xsecToken)', xsecSource ? `(source=${xsecSource})` : '');
 
-    let result = await XhsMcpClient.getNoteDetail(xhsConf.mcpUrl, args.noteId, xsecToken, { loadAllComments: true });
+    let result = await XhsMcpClient.getNoteDetail(xhsConf.mcpUrl, args.noteId, xsecToken, { loadAllComments: true, xsecSource });
 
-        if (!result.success || !result.data) {
+        if (!result.success || !result.data || isBlankXhsDetailData(result.data)) {
             const cachedTitle = ctx.xhsCaches?.noteTitleCache.get(args.noteId);
             if (cachedTitle) {
                 console.log(`📕 [XHS] 详情失败，尝试重新搜索「${cachedTitle}」以刷新 xsecToken...`);
@@ -498,9 +536,10 @@ export async function runXhsDetail(
                     const refreshedNote = refreshResult.notes.find(n => n.noteId === args.noteId);
                     if (refreshedNote?.xsecToken) {
                         xsecToken = refreshedNote.xsecToken;
-                        console.log(`📕 [XHS] 拿到新 xsecToken，重试 detail...`);
+                        xsecSource = refreshedNote.xsecSource || xsecSource;
+                        console.log(`📕 [XHS] 拿到新 xsecToken，重试 detail...`, xsecSource ? `(source=${xsecSource})` : '');
                         ctx.onProgress?.('xhs', '正在查看笔记详情...');
-                        result = await XhsMcpClient.getNoteDetail(xhsConf.mcpUrl, args.noteId, xsecToken, { loadAllComments: true });
+                        result = await XhsMcpClient.getNoteDetail(xhsConf.mcpUrl, args.noteId, xsecToken, { loadAllComments: true, xsecSource });
                     } else {
                         console.warn(`📕 [XHS] 重新搜索结果中未找到 noteId=${args.noteId}`);
                     }
@@ -520,6 +559,10 @@ export async function runXhsDetail(
             if (detailToken && args.noteId && ctx.xhsCaches) {
                 ctx.xhsCaches.xsecTokenCache.set(args.noteId, detailToken);
                 console.log(`📕 [XHS] 从 detail 缓存 xsecToken: ${args.noteId}`);
+            }
+            const detailSource = noteObj?.xsecSource || noteObj?.xsec_source || (d as any)?.xsecSource || xsecSource;
+            if (detailSource && args.noteId && ctx.xhsCaches?.xsecSourceCache) {
+                ctx.xhsCaches.xsecSourceCache.set(args.noteId, detailSource);
             }
 
             if (ctx.xhsCaches) {
@@ -558,15 +601,18 @@ export async function runXhsDetail(
                     detailText = detailData.slice(0, 5000);
                 }
             } else {
-                const innerData = (detailData as any).data && typeof (detailData as any).data === 'object' ? (detailData as any).data : null;
-                const note = innerData?.note || (detailData as any).note || detailData;
+                if (isBlankXhsDetailData(detailData)) {
+                    detailText = `[加载失败: ${detailFailureMessage(detailData)}]`;
+                } else {
+                const { note, comments: commentArr, commentsError } = extractDetailPayload(detailData);
                 const noteTitle = note.title || note.displayTitle || note.display_title || '';
                 const noteDesc = (note.desc || note.description || note.content || '').slice(0, 1500);
                 const noteAuthor = note.user?.nickname || note.author || '';
-                const noteLikes = note.interactInfo?.likedCount || note.likes || 0;
-                const noteCollects = note.interactInfo?.collectedCount || note.collects || 0;
-                const noteShareCount = note.interactInfo?.shareCount || 0;
-                const noteCommentCount = note.interactInfo?.commentCount || 0;
+                const interact = note.interactInfo || note.interact_info || {};
+                const noteLikes = interact.likedCount || interact.liked_count || note.likes || 0;
+                const noteCollects = interact.collectedCount || interact.collected_count || note.collects || 0;
+                const noteShareCount = interact.shareCount || interact.share_count || 0;
+                const noteCommentCount = interact.commentCount || interact.comment_count || 0;
                 const noteTime = note.time ? new Date(note.time).toLocaleString('zh-CN') : '';
                 const noteIp = note.ipLocation || '';
 
@@ -575,11 +621,6 @@ export async function runXhsDetail(
                 if (noteIp) noteSection += `\n IP: ${noteIp}`;
                 noteSection += `\n互动: ${noteLikes}赞 ${noteCollects}收藏 ${noteCommentCount}评论 ${noteShareCount}分享`;
                 noteSection += `\n\n正文:\n${noteDesc}`;
-
-                const rawComments = innerData?.comments?.list || innerData?.comments
-                    || (detailData as any).comments?.list || (detailData as any).comments
-                    || note.comments?.list || note.comments || [];
-                const commentArr = Array.isArray(rawComments) ? rawComments : [];
 
                 let commentsSection = '';
                 if (commentArr.length > 0) {
@@ -597,11 +638,14 @@ export async function runXhsDetail(
                     };
                     commentsSection = `\n\n💬 评论区 (${commentArr.length}条):\n` +
                         commentArr.slice(0, 30).map((c: any) => formatComment(c)).join('\n');
+                } else if (commentsError) {
+                    commentsSection = `\n\n💬 评论区读取失败: ${String(commentsError).slice(0, 200)}`;
                 } else {
                     commentsSection = '\n\n💬 评论区: （暂无评论）';
                 }
 
                 detailText = (noteSection + commentsSection).slice(0, 8000);
+                }
             }
         } else {
             detailText = `[加载失败: ${result.error || '无法获取笔记详情，可能需要先在搜索/浏览结果中看到这条笔记'}]`;

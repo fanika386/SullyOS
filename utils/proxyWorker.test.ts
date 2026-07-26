@@ -5,6 +5,7 @@ import {
   setProxyWorkerUrl,
   isCustomProxyWorker,
   rewriteStaleWorkerUrl,
+  rewriteXhsLiteServerUrl,
 } from './proxyWorker';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
@@ -97,5 +98,37 @@ describe('rewriteStaleWorkerUrl', () => {
     expect(rewriteStaleWorkerUrl(DEFAULT_PROXY_WORKER)).toBe(DEFAULT_PROXY_WORKER);
     expect(rewriteStaleWorkerUrl('https://my-own.example.com/api')).toBe('https://my-own.example.com/api');
     expect(rewriteStaleWorkerUrl('')).toBe('');
+  });
+});
+
+describe('rewriteXhsLiteServerUrl', () => {
+  it('moves a saved Lite URL from the previous proxy worker to the new proxy worker', () => {
+    expect(
+      rewriteXhsLiteServerUrl(
+        'https://old-worker.example.com/api',
+        'https://old-worker.example.com',
+        'https://new-worker.example.com',
+      ),
+    ).toBe('https://new-worker.example.com/api');
+  });
+
+  it('moves the default Lite URL when the main proxy worker becomes custom', () => {
+    expect(
+      rewriteXhsLiteServerUrl(
+        `${DEFAULT_PROXY_WORKER}/api`,
+        DEFAULT_PROXY_WORKER,
+        'https://my-own.example.com',
+      ),
+    ).toBe('https://my-own.example.com/api');
+  });
+
+  it('does not rewrite a local xhs-bridge api URL', () => {
+    expect(
+      rewriteXhsLiteServerUrl(
+        'http://localhost:18061/api',
+        DEFAULT_PROXY_WORKER,
+        'https://my-own.example.com',
+      ),
+    ).toBe('http://localhost:18061/api');
   });
 });

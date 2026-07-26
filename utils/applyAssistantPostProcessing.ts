@@ -208,6 +208,8 @@ export interface XhsCaches {
     xsecTokenCache: Map<string, string>;
     /** noteId → title */
     noteTitleCache: Map<string, string>;
+    /** noteId → xsec_source */
+    xsecSourceCache?: Map<string, string>;
     /** commentId → userId */
     commentUserIdCache: Map<string, string>;
     /** commentId → 评论作者昵称 (降级为 @mention 顶级评论用) */
@@ -1391,7 +1393,7 @@ export async function applyAssistantPostProcessing(
                         for (let i = 0; i < replyRetries.length && !result.success; i++) {
                             console.warn(`📕 [XHS] 回复失败(${i + 1}/${replyRetries.length})，${replyRetries[i] / 1000}秒后重试:`, result.message);
                             await new Promise(r => setTimeout(r, replyRetries[i]));
-                            result = await xhsReplyComment(xhsConf, noteId, xsecToken, replyContent, commentId, commentUserId, parentCommentId);
+                            result = await xhsReplyComment(xhsConf, noteId, xsecToken || '', replyContent, commentId, commentUserId, parentCommentId);
                         }
                     }
                     if (result.success) {

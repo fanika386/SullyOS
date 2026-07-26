@@ -134,6 +134,7 @@ async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<
       await ActiveMsgStore.saveXhsSessionNotes(item.sessionId, {
         notes: pushLastXhsNotesRef.current,
         xsecTokens: Array.from(pushXhsCaches.xsecTokenCache.entries()),
+        xsecSources: Array.from(pushXhsCaches.xsecSourceCache?.entries() || []),
       });
     } catch (e) {
       console.warn('[instant-tool-runner] persist xhs notes failed', item.sessionId, e);

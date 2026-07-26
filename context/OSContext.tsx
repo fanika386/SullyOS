@@ -20,7 +20,7 @@ import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
-import { rewriteStaleWorkerUrl } from '../utils/proxyWorker';
+import { DEFAULT_PROXY_WORKER, getProxyWorkerUrl, rewriteStaleWorkerUrl, rewriteXhsLiteServerUrl } from '../utils/proxyWorker';
 import { INSTALLED_APPS } from '../constants';
 import { markBackupDone } from '../utils/backupReminder';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
@@ -1182,7 +1182,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 const parsed = JSON.parse(savedRealtimeConfig);
                 // 小红书 serverUrl 独立持久化，存量若指向已死的历史 worker 域名则迁到当前实例
                 if (parsed?.xhsMcpConfig?.serverUrl) {
-                    parsed.xhsMcpConfig.serverUrl = rewriteStaleWorkerUrl(parsed.xhsMcpConfig.serverUrl);
+                    parsed.xhsMcpConfig.serverUrl = rewriteXhsLiteServerUrl(
+                        rewriteStaleWorkerUrl(parsed.xhsMcpConfig.serverUrl),
+                        DEFAULT_PROXY_WORKER,
+                        getProxyWorkerUrl(),
+                    );
                 }
                 setRealtimeConfig({ ...defaultRealtimeConfig, ...parsed });
             } catch (e) {

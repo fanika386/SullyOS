@@ -2207,6 +2207,8 @@ export interface XhsNote {
     author: string;
     authorId: string;
     xsecToken?: string;
+    xsecSource?: string;
+    webUrl?: string;
     coverUrl?: string;
     type?: string;  // 'normal' | 'video'
 }

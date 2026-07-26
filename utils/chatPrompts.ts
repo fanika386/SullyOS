@@ -1046,13 +1046,28 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};
                     const sender = m.role === 'user' ? '用户' : '你';
+                    const noteId = (note.noteId || note.note_id || '').trim();
+                    const desc = (note.desc || '').trim();
+                    const xsecToken = (note.xsecToken || note.xsec_token || '').trim();
+                    const xsecSource = (note.xsecSource || note.xsec_source || 'pc_share').trim();
+                    const detailTarget = note.webUrl || note.web_url || (noteId
+                        ? `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${encodeURIComponent(xsecToken)}&xsec_source=${encodeURIComponent(xsecSource)}` : ''}`
+                        : '');
                     // 评论区：user 分享笔记时也带上评论（抓取于建卡时），让角色像浏览笔记一样能看到评论，
                     // 不再出现「char 分享的能看评论、user 分享的看不到」的不对称。
                     const noteComments = Array.isArray(note.comments) ? note.comments : [];
                     const commentsLine = noteComments.length
                         ? `\n热评: ${noteComments.slice(0, 15).map((c: any) => `${c.author || '匿名'}: ${c.content}`).join(' | ')}`
                         : '';
-                    content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}${commentsLine}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
+                    const idLine = noteId ? `\nnoteId=${noteId}` : '';
+                    if (desc || commentsLine) {
+                        content = `${timeStr} [${sender}分享了小红书笔记]${idLine}\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${desc || '无'}${commentsLine}\n${m.role === 'user' ? '(请根据你实际读到的标题/正文/评论发表看法，不要补不存在的细节)' : ''}`;
+                    } else {
+                        const detailHint = noteId
+                            ? `如果需要读原链接，请先用 [[XHS_DETAIL: ${detailTarget || noteId}]] 打开这条笔记；不要改用标题搜索来冒充这篇原帖。`
+                            : '如果需要读原链接，请先告诉用户这张卡片缺少 noteId，无法直接打开详情；不要改用标题搜索来冒充这篇原帖。';
+                        content = `${timeStr} [${sender}分享了小红书笔记]${idLine}\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n（正文/评论没抓到，别假装读过。${detailHint}）`;
+                    }
                 }
                 else if ((m.type as string) === 'vr_card') {
                     // vr_card：你自己进入 VR 社交游戏《彼方》时留下的动态。

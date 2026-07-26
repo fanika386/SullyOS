@@ -1189,15 +1189,24 @@ const XHSLite = (() => {
     const url = cover.url_default || cover.url_pre || cover.url || (cover.info_list?.[0]?.url) || '';
     return url ? url.replace(/^http:\/\//, 'https://') : '';
   }
-  function normItem(item) {
+  function buildXhsWebUrl(noteId, xsecToken, xsecSource) {
+    if (!noteId) return '';
+    const params = [];
+    if (xsecToken) params.push(`xsec_token=${encodeURIComponent(xsecToken)}`);
+    if (xsecSource) params.push(`xsec_source=${encodeURIComponent(xsecSource)}`);
+    return `https://www.xiaohongshu.com/explore/${noteId}${params.length ? '?' + params.join('&') : ''}`;
+  }
+  function normItem(item, fallbackXsecSource = 'pc_feed') {
     const nc = item.note_card || item.noteCard || item;
     const user = nc.user || {};
     const interact = nc.interact_info || nc.interactInfo || {};
     const liked = interact.liked_count ?? interact.likedCount ?? 0;
-    const id = item.id || nc.note_id || nc.id || '';
-    const token = item.xsec_token || nc.xsec_token || '';
+    const id = item.id || item.note_id || item.noteId || nc.note_id || nc.noteId || nc.id || '';
+    const token = item.xsec_token || item.xsecToken || nc.xsec_token || nc.xsecToken || '';
+    const source = item.xsec_source || item.xsecSource || nc.xsec_source || nc.xsecSource || fallbackXsecSource || '';
     return {
-      id, note_id: id, noteId: id, xsec_token: token, xsecToken: token,
+      id, note_id: id, noteId: id, xsec_token: token, xsecToken: token, xsec_source: source, xsecSource: source,
+      web_url: buildXhsWebUrl(id, token, source), webUrl: buildXhsWebUrl(id, token, source),
       title: nc.display_title || nc.title || '', display_title: nc.display_title || nc.title || '',
       desc: nc.desc || '', type: nc.type || item.model_type || '',
       user: { nickname: user.nickname || user.nick_name || '', user_id: user.user_id || user.userId || '' },
@@ -1207,13 +1216,15 @@ const XHSLite = (() => {
     };
   }
   function normComment(c) {
-    const u = c.user_info || c.user || {};
+    const u = c.user_info || c.userInfo || c.user || {};
+    const subs = c.sub_comments || c.subComments || [];
     return {
-      id: c.id || '', comment_id: c.id || '', commentId: c.id || '', content: c.content || '',
+      id: c.id || c.comment_id || c.commentId || '', comment_id: c.id || c.comment_id || c.commentId || '', commentId: c.id || c.comment_id || c.commentId || '', content: c.content || c.text || '',
       nickname: u.nickname || '', author_name: u.nickname || '',
       user: { nickname: u.nickname || '', user_id: u.user_id || '' },
-      like_count: c.like_count || '0', likes: c.like_count || '0',
-      sub_comments: Array.isArray(c.sub_comments) ? c.sub_comments.map(normComment) : [],
+      userInfo: { nickname: u.nickname || '', userId: u.user_id || u.userId || '' },
+      like_count: c.like_count || c.likeCount || '0', likes: c.like_count || c.likeCount || '0',
+      sub_comments: Array.isArray(subs) ? subs.map(normComment) : [],
     };
   }
 
@@ -1227,7 +1238,7 @@ const XHSLite = (() => {
     const ck = parseCookies(cookieStr);
     const payload = { cursor_score: cursorScore, num: 20, refresh_type: refreshType, note_index: noteIndex, unread_begin_note_id: '', unread_end_note_id: '', unread_note_count: 0, category, search_key: '', need_num: 10, image_formats: IMG_FORMATS, need_filter_image: false };
     const r = await signedPost(EDITH, '/api/sns/web/v1/homefeed', payload, cookieStr, ck);
-    return { feeds: (r?.data?.items || []).map(normItem), cursor_score: r?.data?.cursor_score, success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r };
+    return { feeds: (r?.data?.items || []).map((item) => normItem(item, 'pc_feed')), cursor_score: r?.data?.cursor_score, success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r };
   }
   const SORT_MAP = { general: 'general', time: 'time_descending', hot: 'popularity_descending', comment: 'comment_descending', collect: 'collect_descending' };
   function genSearchId() {
@@ -1245,22 +1256,64 @@ const XHSLite = (() => {
       geo: '', image_formats: IMG_FORMATS };
     const r = await signedPost(EDITH, '/api/sns/web/v1/search/notes', payload, cookieStr, ck);
     const items = (r?.data?.items || []).filter((it) => it.id && (it.note_card || it.model_type === 'note'));
-    return { feeds: items.map(normItem), success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r };
+    return { feeds: items.map((item) => normItem(item, 'pc_search')), success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r };
   }
   async function getFeedDetail(cookieStr, feedId, xsecToken, { xsecSource = 'pc_feed', loadComments = true } = {}) {
     const ck = parseCookies(cookieStr);
-    const payload = { source_note_id: feedId, image_formats: IMG_FORMATS, extra: { need_body_topic: '1' }, xsec_source: xsecSource || 'pc_feed', xsec_token: xsecToken || '' };
-    const r = await signedPost(EDITH, '/api/sns/web/v1/feed', payload, cookieStr, ck, { 'xy-direction': '13' });
-    const nc = r?.data?.items?.[0]?.note_card || {};
-    const note = { note_id: feedId, title: nc.title || '', content: nc.desc || '', desc: nc.desc || '', user: nc.user || {}, interact_info: nc.interact_info || {}, image_list: nc.image_list || [], xsec_token: xsecToken || '' };
+    const sources = [];
+    for (const s of [xsecSource, 'pc_feed', 'pc_search', 'pc_share', 'pc_note']) {
+      const source = String(s || '').trim();
+      if (source && !sources.includes(source)) sources.push(source);
+    }
+    const attempts = [];
+    let r = null;
+    let nc = null;
+    let usedSource = sources[0] || 'pc_feed';
+    for (const source of sources) {
+      const payload = { source_note_id: feedId, image_formats: IMG_FORMATS, extra: { need_body_topic: '1' }, xsec_source: source, xsec_token: xsecToken || '' };
+      const candidate = await signedPost(EDITH, '/api/sns/web/v1/feed', payload, cookieStr, ck, { 'xy-direction': '13' });
+      const card = candidate?.data?.items?.[0]?.note_card || null;
+      attempts.push({ xsec_source: source, success: !!candidate?.success, msg: candidate?.msg, item_count: candidate?.data?.items?.length || 0, has_note_card: !!card });
+      if (!r) r = candidate;
+      if (card && (card.title || card.display_title || card.desc || (Array.isArray(card.image_list) && card.image_list.length > 0))) {
+        r = candidate;
+        nc = card;
+        usedSource = source;
+        break;
+      }
+    }
+    if (!nc) {
+      return {
+        success: false,
+        error: '小红书返回了空详情，请重新搜索/浏览这条笔记刷新 xsec_token 后再试。',
+        msg: r?.msg,
+        data: {
+          note: { note_id: feedId, noteId: feedId, title: '', content: '', desc: '', xsec_token: xsecToken || '', xsecSource: usedSource, xsec_source: usedSource },
+          comments: { list: [], error: '详情为空，未读取评论。' },
+        },
+        raw_error: r,
+        debug: { attempts },
+      };
+    }
+    const detailToken = xsecToken || nc.xsec_token || nc.xsecToken || '';
+    const note = {
+      note_id: feedId, noteId: feedId,
+      title: nc.title || nc.display_title || '', display_title: nc.display_title || nc.title || '',
+      content: nc.desc || '', desc: nc.desc || '', user: nc.user || {}, interact_info: nc.interact_info || nc.interactInfo || {},
+      image_list: nc.image_list || [], xsec_token: detailToken, xsecToken: detailToken,
+      xsec_source: usedSource, xsecSource: usedSource,
+      web_url: buildXhsWebUrl(feedId, detailToken, usedSource), webUrl: buildXhsWebUrl(feedId, detailToken, usedSource),
+    };
     let comments = [];
+    let commentsError = '';
     if (loadComments) {
       try {
-        const cr = await signedGet(EDITH, '/api/sns/web/v2/comment/page', { note_id: feedId, cursor: '', top_comment_id: '', image_formats: 'jpg,webp,avif', xsec_token: xsecToken || '' }, cookieStr, ck);
-        comments = (cr?.data?.comments || []).map(normComment);
-      } catch (e) { /* best effort */ }
+        const cr = await signedGet(EDITH, '/api/sns/web/v2/comment/page', { note_id: feedId, cursor: '', top_comment_id: '', image_formats: 'jpg,webp,avif', xsec_token: detailToken, xsec_source: usedSource }, cookieStr, ck);
+        if (Array.isArray(cr?.data?.comments)) comments = cr.data.comments.map(normComment);
+        else commentsError = cr?.msg || cr?.message || JSON.stringify(cr).slice(0, 200);
+      } catch (e) { commentsError = e.message || String(e); }
     }
-    return { data: { note, comments: { list: comments } }, success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r };
+    return { data: { note, comments: { list: comments, error: commentsError || undefined } }, success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r, debug: { attempts } };
   }
   async function userProfile(cookieStr, userId, xsecToken) {
     const ck = parseCookies(cookieStr);
@@ -1268,7 +1321,7 @@ const XHSLite = (() => {
     let notes = [];
     try {
       const posted = await signedGet(EDITH, '/api/sns/web/v1/user_posted', { num: 30, cursor: '', user_id: userId, image_formats: 'jpg,webp,avif', xsec_token: xsecToken || '', xsec_source: 'pc_note' }, cookieStr, ck);
-      notes = (posted?.data?.notes || []).map(normItem);
+      notes = (posted?.data?.notes || []).map((item) => normItem(item, 'pc_note'));
     } catch (e) { /* best effort */ }
     return { basic_info: info?.data?.basic_info || {}, notes, feeds: notes, success: !!info?.success };
   }

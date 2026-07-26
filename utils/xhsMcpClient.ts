@@ -75,6 +75,10 @@ const bridgePost = async (
         if (data.error) {
             return { success: false, error: data.error };
         }
+        if (data && typeof data === 'object' && data.success === false) {
+            const upstreamError = data.msg || data.message || data.raw_error?.msg || data.rawError?.message || '小红书接口返回失败';
+            return { success: false, error: String(upstreamError), data };
+        }
         return { success: true, data };
     } catch (e: any) {
         return { success: false, error: e.message };
@@ -310,6 +314,15 @@ const extractXsecTokenFromUrl = (url: string): string | undefined => {
     }
 };
 
+const extractXsecSourceFromUrl = (url: string): string | undefined => {
+    try {
+        const u = new URL(url);
+        return u.searchParams.get('xsec_source') || undefined;
+    } catch {
+        return undefined;
+    }
+};
+
 // ==================== Auto-extract helpers ====================
 
 /**
@@ -488,19 +501,22 @@ export const XhsMcpClient = {
             : mcpCallTool(serverUrl, 'get_recommend');
     },
 
-    getNoteDetail: async (serverUrl: string, noteUrl: string, xsecToken?: string, options?: { loadAllComments?: boolean }): Promise<McpToolResult> => {
+    getNoteDetail: async (serverUrl: string, noteUrl: string, xsecToken?: string, options?: { loadAllComments?: boolean; xsecSource?: string }): Promise<McpToolResult> => {
         const feedId = extractNoteIdFromUrl(noteUrl);
         const token = xsecToken || extractXsecTokenFromUrl(noteUrl) || '';
+        const source = options?.xsecSource || extractXsecSourceFromUrl(noteUrl) || '';
 
         if (detectMode(serverUrl) === 'bridge') {
             return bridgePost(serverUrl, 'get-feed-detail', {
                 feed_id: feedId, xsec_token: token,
+                xsec_source: source,
                 load_all_comments: options?.loadAllComments || false,
                 click_more_replies: options?.loadAllComments || false,
             });
         }
         const args: Record<string, any> = { url: noteUrl };
         if (xsecToken) args.xsec_token = xsecToken;
+        if (source) args.xsec_source = source;
         if (options?.loadAllComments) { args.load_all_comments = true; args.click_more_replies = true; }
         return mcpCallTool(serverUrl, 'get_note_detail', args);
     },
@@ -661,7 +677,7 @@ export const extractNotesFromMcpData = (data: any): any[] => {
     return [];
 };
 
-export const normalizeNote = (n: any): { noteId: string; title: string; desc: string; author: string; authorId: string; likes: number; xsecToken?: string; coverUrl?: string; type?: string } => {
+export const normalizeNote = (n: any): { noteId: string; title: string; desc: string; author: string; authorId: string; likes: number; xsecToken?: string; xsecSource?: string; webUrl?: string; coverUrl?: string; type?: string } => {
     const card = n.noteCard || n.notecard;
     // 封面：cover 对象 / 字符串，或笔记图片列表首图（feed detail 返回 image_list）。
     const coverObj = card?.cover || n.cover || n.image_list?.[0] || card?.image_list?.[0];
@@ -673,14 +689,22 @@ export const normalizeNote = (n: any): { noteId: string; title: string; desc: st
     const likesRaw = n.likes || n.liked_count
         || n.interact_info?.liked_count || n.interactInfo?.likedCount
         || card?.interact_info?.liked_count || card?.interactInfo?.likedCount || 0;
+    const noteId = n.noteId || n.note_id || n.id || card?.note_id || card?.noteId || card?.id || '';
+    const xsecToken = n.xsecToken || n.xsec_token || card?.xsec_token || card?.xsecToken || undefined;
+    const xsecSource = n.xsecSource || n.xsec_source || card?.xsec_source || card?.xsecSource || undefined;
+    const webUrl = n.webUrl || n.web_url || n.url || (noteId
+        ? `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${encodeURIComponent(xsecToken)}${xsecSource ? `&xsec_source=${encodeURIComponent(xsecSource)}` : ''}` : ''}`
+        : undefined);
     return {
-        noteId: n.noteId || n.note_id || n.id || card?.note_id || card?.noteId || card?.noteId || '',
+        noteId,
         title: n.title || n.display_title || n.displayTitle || card?.display_title || card?.displayTitle || '',
         desc: (n.desc || n.description || n.content || card?.desc || card?.description || card?.title || '').slice(0, 500),
         author: n.author || n.nickname || n.user?.nickname || n.user?.name || card?.user?.nickname || card?.user?.name || '',
         authorId: n.authorId || n.author_id || n.user?.user_id || n.user?.userId || card?.user?.user_id || card?.user?.userId || '',
         likes: typeof likesRaw === 'string' ? parseInt(likesRaw, 10) || 0 : (likesRaw || 0),
-        xsecToken: n.xsecToken || n.xsec_token || card?.xsec_token || card?.xsecToken || undefined,
+        xsecToken,
+        xsecSource,
+        webUrl,
         coverUrl,
         type: n.type || card?.type || undefined,
     };

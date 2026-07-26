@@ -14,8 +14,8 @@
  * 把自己部署的 worker 地址填进「设置 → 网络代理 (Worker)」即可，
  * 以上全部能力会自动切到你的实例，无需改任何代码。
  *
- * 注意：网易云音乐（MusicContext）和小红书 Lite 各自在自己的 App / 设置里有
- * 独立的 worker 地址输入框，走各自的持久化，不受这里影响。
+ * 注意：小红书 Lite 目前不单独暴露地址输入框，使用这里的主代理 Worker + /api；
+ * 网易云音乐仍保留独立地址框，单独填了就以音乐配置为准。
  */
 
 export const DEFAULT_PROXY_WORKER = 'https://sullymeow.ccwu.cc';
@@ -101,4 +101,32 @@ export const rewriteStaleWorkerUrl = (url: string): string => {
   } catch {
     return base;
   }
+};
+
+/**
+ * 小红书 Lite 的 serverUrl 是主代理 Worker + /api。它单独存在
+ * os_realtime_config 里；当主代理 Worker 切换时，需要把这个旧快照一并迁移。
+ * 本地 xhs-bridge 也可能是 /api，所以只改写明确属于旧主 Worker / 默认 Worker /
+ * 已废弃公共实例的地址。
+ */
+export const rewriteXhsLiteServerUrl = (
+  serverUrl: string | undefined,
+  previousWorkerUrl: string,
+  nextWorkerUrl: string,
+): string | undefined => {
+  if (!serverUrl) return serverUrl;
+  const normalizedServerUrl = normalize(serverUrl);
+  const previousApiUrl = `${normalize(previousWorkerUrl || DEFAULT_PROXY_WORKER)}/api`;
+  const defaultApiUrl = `${DEFAULT_PROXY_WORKER}/api`;
+  const nextApiUrl = `${normalize(nextWorkerUrl || DEFAULT_PROXY_WORKER)}/api`;
+
+  if (
+    normalizedServerUrl === previousApiUrl ||
+    normalizedServerUrl === defaultApiUrl ||
+    STALE_HOSTS.some((re) => re.test(normalizedServerUrl))
+  ) {
+    return nextApiUrl;
+  }
+
+  return normalizedServerUrl;
 };

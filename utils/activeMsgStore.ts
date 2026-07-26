@@ -135,6 +135,7 @@ const XHS_SESSION_NOTES_TTL_MS = 3 * 60 * 60 * 1000;
 export type XhsSessionNotes = {
   notes: unknown[];
   xsecTokens: Array<[string, string]>;
+  xsecSources?: Array<[string, string]>;
   savedAt: number;
 };
 
@@ -306,12 +307,13 @@ export const ActiveMsgStore = {
   // ─── XHS 跨轮笔记缓冲 (持久化) ─────────────────────────────────────────────
   async saveXhsSessionNotes(
     sessionId: string,
-    payload: { notes: unknown[]; xsecTokens: Array<[string, string]> },
+    payload: { notes: unknown[]; xsecTokens: Array<[string, string]>; xsecSources?: Array<[string, string]> },
   ): Promise<void> {
     if (!sessionId) return;
     await setKv<XhsSessionNotes>(`${XHS_SESSION_NOTES_PREFIX}${sessionId}`, {
       notes: payload.notes,
       xsecTokens: payload.xsecTokens,
+      xsecSources: payload.xsecSources,
       savedAt: Date.now(),
     });
     await pruneStaleXhsSessionNotes();
