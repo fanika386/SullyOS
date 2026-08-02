@@ -17,3 +17,6 @@ export const normalizeLauncherPinwheelOrder = (
         ...available.filter(id => !(saved || []).includes(id)),
     ];
 };
+
+export const shouldShowLauncherScheduleWidget = (): boolean =>
+    isAppVisible(AppID.Schedule);

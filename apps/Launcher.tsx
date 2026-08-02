@@ -11,7 +11,11 @@ import MobileGameHome from '../components/os/MobileGameHome';
 import TamagotchiHome from '../components/os/TamagotchiHome';
 import { getLocalDailySchedule } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
-import { normalizeLauncherPinwheelOrder, type LauncherPinwheelCell } from '../utils/launcherVisibility';
+import {
+  normalizeLauncherPinwheelOrder,
+  shouldShowLauncherScheduleWidget,
+  type LauncherPinwheelCell,
+} from '../utils/launcherVisibility';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -588,6 +592,7 @@ const Launcher: React.FC = () => {
   const page2Apps = appPages[1] || [];
   const page2QuadA = useMemo(() => page2Apps.slice(0, 4), [page2Apps]);
   const page2QuadB = useMemo(() => page2Apps.slice(4, 8), [page2Apps]);
+  const showScheduleWidget = shouldShowLauncherScheduleWidget();
 
   // Total pages = App Pages + 1 Widget Page
   const totalPages = appPages.length + 1;
@@ -644,9 +649,9 @@ const Launcher: React.FC = () => {
   }, [characters, scheduleCharId, activeCharacterId]);
 
   useEffect(() => {
-      if (!scheduleChar || !isDataLoaded) return;
+      if (!showScheduleWidget || !scheduleChar || !isDataLoaded) return;
       getLocalDailySchedule(scheduleChar.id).then(s => setScheduleData(s)).catch(() => {});
-  }, [scheduleChar, isDataLoaded, localDateKey]);
+  }, [showScheduleWidget, scheduleChar, isDataLoaded, localDateKey]);
 
   // Restore scroll position BEFORE paint to avoid visible flash/slide
   useLayoutEffect(() => {
@@ -1027,7 +1032,7 @@ const Launcher: React.FC = () => {
                   ) : idx === 1 ? (
                       // Page 2: Schedule 4x2 widget on top + Pinwheel (Music / 2x2 icons / 2x2 icons / Image) below
                       <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-center">
-                          {scheduleChar && (
+                          {showScheduleWidget && scheduleChar && (
                               <ScheduleHomeWidget
                                   schedule={scheduleData}
                                   character={scheduleChar}
