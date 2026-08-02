@@ -134,6 +134,8 @@ export const MemoryNodeDB = {
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
 
+    getAll: () => getAll<MemoryNode>(STORE_MEMORY_NODES),
+
     delete: async (id: string) => {
         await deleteByKey(STORE_MEMORY_NODES, id);
         bm25Index.onNodeDeleted(id);

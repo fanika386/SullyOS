@@ -12,6 +12,7 @@ import {
     DigestReportDB, PLATE_TITLES,
     bootstrapPlatesFromHistory, markPlateBootstrapDone,
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
+    scanExactDuplicateMemories, applyExactDuplicateMemoryDeletion,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
@@ -537,6 +538,9 @@ export default function MemoryPalaceApp() {
     // 一键清空
     const [wiping, setWiping] = useState(false);
     const [wipeResult, setWipeResult] = useState<string | null>(null);
+    // 完整去重：扫描所有角色、按角色内部精确正文去重
+    const [deduping, setDeduping] = useState(false);
+    const [dedupResult, setDedupResult] = useState<string | null>(null);
 
     // 导出记忆（接入外置记忆库）
     const [exporting, setExporting] = useState(false);
@@ -1598,6 +1602,56 @@ export default function MemoryPalaceApp() {
             setWipeResult(`[err]清空失败：${e?.message || e}`);
         } finally {
             setWiping(false);
+        }
+    };
+
+    /** 完整去重：先扫描并询问，确认后删除同一角色内正文完全相同的重复节点。 */
+    const handleDeduplicateAllMemories = async () => {
+        if (deduping) return;
+        setDeduping(true);
+        setDedupResult('正在扫描所有记忆节点…');
+        try {
+            const preview = await scanExactDuplicateMemories();
+            if (preview.duplicateCount === 0) {
+                setDedupResult(`[ok]扫描 ${preview.scannedCount} 条记忆，没有发现正文完全相同的重复项`);
+                return;
+            }
+
+            const nameById = new Map(characters.map(c => [c.id, c.name]));
+            const sample = preview.groups.slice(0, 5).map((group, idx) => {
+                const owner = nameById.get(group.charId) || group.charId;
+                const text = group.content.length > 48 ? `${group.content.slice(0, 48)}…` : group.content;
+                return `${idx + 1}. ${owner}：${text}（${group.nodes.length} 条，删除 ${group.duplicates.length} 条）`;
+            }).join('\n');
+            const more = preview.groups.length > 5 ? `\n…还有 ${preview.groups.length - 5} 组` : '';
+            const confirmed = confirm(
+                `完整去重扫描完成：\n\n` +
+                `- 扫描 ${preview.scannedCount} 条记忆，覆盖 ${preview.charCount} 个角色\n` +
+                `- 找到 ${preview.groups.length} 组重复，将删除 ${preview.duplicateCount} 条\n\n` +
+                `范围：同一角色内部的所有房间、事件盒、归档记忆；跨角色相同内容不会删除。\n` +
+                `保留规则：每组保留 1 条（优先保留置顶 / 事件盒总结 / 未归档 / 访问更多 / 更重要 / 更早创建）。\n\n` +
+                `示例：\n${sample}${more}\n\n` +
+                `确定现在删除这些重复记忆吗？`
+            );
+            if (!confirmed) {
+                setDedupResult(`[warn]已取消：扫描发现 ${preview.duplicateCount} 条重复记忆，未删除`);
+                return;
+            }
+
+            const result = await applyExactDuplicateMemoryDeletion(preview, {
+                remoteConfig: remoteVectorConfig,
+                onProgress: (deleted, total) => setDedupResult(`正在删除 ${deleted}/${total} 条重复记忆…`),
+            });
+            const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
+            const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
+            setDedupResult(
+                `${result.failed.length > 0 ? '[warn]' : '[ok]'}扫描 ${result.scannedCount} 条，删除 ${result.deleted}/${result.duplicateCount} 条重复记忆${remotePart}${failPart}`
+            );
+            await loadStats();
+        } catch (e: any) {
+            setDedupResult(`[err]去重失败：${e?.message || e}`);
+        } finally {
+            setDeduping(false);
         }
     };
 
@@ -4043,6 +4097,48 @@ create table if not exists memory_vectors (
                     </div>
                 </div>
                 </>)}
+
+                {/* 维护工具：完整精确去重 */}
+                {isGlobal && (
+                <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 16, padding: 16, border: '1px solid #cbd5e1' }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="search" size={14} />
+                        <span>维护工具：完整去重</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, lineHeight: 1.7 }}>
+                        扫描所有角色的记忆宫殿节点，只在<b>同一角色内部</b>比较正文完全相同的记忆。
+                        找到重复后会先弹窗列出数量和示例，确认后才删除；删除时会同步清理本地向量、关联和事件盒引用。
+                    </div>
+
+                    {dedupResult && (
+                        <div style={{
+                            fontSize: 12, marginBottom: 10,
+                            color: dedupResult.startsWith('[err]') ? '#dc2626' : dedupResult.startsWith('[warn]') ? '#d97706' : dedupResult.startsWith('[ok]') ? '#166534' : '#64748b',
+                        }}>
+                            <StatusMessage msg={dedupResult} />
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleDeduplicateAllMemories}
+                        disabled={deduping}
+                        style={{
+                            width: '100%', padding: '10px 0', borderRadius: 12,
+                            border: '1px solid #cbd5e1', fontWeight: 700, fontSize: 13,
+                            color: deduping ? '#94a3b8' : '#334155',
+                            background: deduping ? '#f1f5f9' : 'white',
+                            cursor: deduping ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {deduping ? '处理中…' : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <Icon name="trash" size={13} />
+                                <span>扫描并清理重复记忆</span>
+                            </span>
+                        )}
+                    </button>
+                </div>
+                )}
 
                 {/* 危险区：一键清空 */}
                 {isGlobal && (
