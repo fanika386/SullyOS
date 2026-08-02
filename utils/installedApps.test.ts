@@ -18,6 +18,8 @@ describe('installed desktop apps', () => {
             AppID.SpecialMoments,
             AppID.Music,
             AppID.CharCreatorDev,
+            AppID.Bank,
+            AppID.Appearance,
         ];
 
         for (const appId of prunedIds) {

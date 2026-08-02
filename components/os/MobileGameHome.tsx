@@ -8,6 +8,7 @@ import { getMobileGameArt } from './mobilegameArt';
 import { SCHEMES, hsl, schemePreview, type TgStyle } from './gotchiScheme';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../../utils/devDebug';
+import { shouldShowLauncherAppearanceEntrypoints } from '../../utils/launcherVisibility';
 
 // ===== 手游主题（mobilegame skin）=====
 // 风格：梦幻粉紫二次元手游首页（照搬参考图）。浅粉紫底 + 深紫文字 + 粉色强调，
@@ -287,6 +288,7 @@ const MobileGameHome: React.FC = () => {
     );
     const visibleQuickEntries = useMemo(() => QUICK_ENTRIES.filter(e => isAppVisible(e.id)), []);
     const visibleGridCards = useMemo(() => GRID_CARDS.filter(card => isAppVisible(card.id)), []);
+    const showAppearanceEntrypoints = shouldShowLauncherAppearanceEntrypoints();
 
     // 货币大卡
     const CoinCard: React.FC<{ icon: React.ReactNode; value: string }> = ({ icon, value }) => (
@@ -316,23 +318,25 @@ const MobileGameHome: React.FC = () => {
                         <span className="text-[11px] font-bold" style={{ color: PAL.grape, letterSpacing: '0.3em' }}>SULLYOS&nbsp;STATION</span>
                         <span className="text-[9px]" style={{ color: PAL.peri }}>✦</span>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <button onClick={() => setMgPaletteOpen(v => !v)} aria-label="界面配色"
-                            className="w-7 h-7 rounded-full flex items-center justify-center active:scale-90 transition-transform"
-                            style={{ background: 'var(--mg-chip)', border: '1px solid var(--mg-chip-line)', color: PAL.grape }}>
-                            <span className="w-4 h-4">{MG_PALETTE_ICON}</span>
-                        </button>
-                        <button onClick={() => openApp(AppID.Appearance)} aria-label="菜单" className="flex flex-col items-end gap-[3.5px] py-2 active:opacity-60 transition-opacity">
-                            <span className="w-5 h-[2px] rounded-full" style={{ background: PAL.grape }} />
-                            <span className="w-5 h-[2px] rounded-full" style={{ background: PAL.grape }} />
-                            <span className="w-5 h-[2px] rounded-full" style={{ background: PAL.grape }} />
-                        </button>
-                    </div>
+                    {showAppearanceEntrypoints && (
+                        <div className="flex items-center gap-3">
+                            <button onClick={() => setMgPaletteOpen(v => !v)} aria-label="界面配色"
+                                className="w-7 h-7 rounded-full flex items-center justify-center active:scale-90 transition-transform"
+                                style={{ background: 'var(--mg-chip)', border: '1px solid var(--mg-chip-line)', color: PAL.grape }}>
+                                <span className="w-4 h-4">{MG_PALETTE_ICON}</span>
+                            </button>
+                            <button onClick={() => openApp(AppID.Appearance)} aria-label="菜单" className="flex flex-col items-end gap-[3.5px] py-2 active:opacity-60 transition-opacity">
+                                <span className="w-5 h-[2px] rounded-full" style={{ background: PAL.grape }} />
+                                <span className="w-5 h-[2px] rounded-full" style={{ background: PAL.grape }} />
+                                <span className="w-5 h-[2px] rounded-full" style={{ background: PAL.grape }} />
+                            </button>
+                        </div>
+                    )}
                 </div>
                 <div className="h-px mt-2" style={{ background: `linear-gradient(90deg, ${PAL.lilac}, transparent)`, opacity: 0.5 }} />
 
                 {/* ===== 🎨 界面配色面板（经典 + 12 方案，含暗色；点外面关闭）===== */}
-                {mgPaletteOpen && (
+                {showAppearanceEntrypoints && mgPaletteOpen && (
                     <>
                         <div className="fixed inset-0 z-[60]" onClick={() => setMgPaletteOpen(false)} />
                         <div className="absolute right-0 z-[61] w-[16.5rem] rounded-2xl p-3.5 animate-pop-in"
