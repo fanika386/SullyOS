@@ -10,9 +10,9 @@ describe('launcher visibility helpers', () => {
         expect(normalizeLauncherPinwheelOrder(['music', 'appsA', 'appsB', 'image'])).not.toContain('music');
     });
 
-    it('does not expose appearance image entrypoints when appearance is pruned', () => {
-        expect(normalizeLauncherPinwheelOrder(['image', 'appsA', 'appsB'])).not.toContain('image');
-        expect(shouldShowLauncherAppearanceEntrypoints()).toBe(false);
+    it('keeps appearance image entrypoints when appearance is available', () => {
+        expect(normalizeLauncherPinwheelOrder(['image', 'appsA', 'appsB'])).toContain('image');
+        expect(shouldShowLauncherAppearanceEntrypoints()).toBe(true);
     });
 
     it('does not expose the schedule widget when schedule is pruned', () => {

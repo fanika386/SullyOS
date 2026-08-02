@@ -19,11 +19,17 @@ describe('installed desktop apps', () => {
             AppID.Music,
             AppID.CharCreatorDev,
             AppID.Bank,
-            AppID.Appearance,
+            AppID.Date,
         ];
 
         for (const appId of prunedIds) {
             expect(visibleIds.has(appId)).toBe(false);
         }
+    });
+
+    it('keeps appearance available for interface customization', () => {
+        const visibleIds = new Set(INSTALLED_APPS.map(app => app.id));
+
+        expect(visibleIds.has(AppID.Appearance)).toBe(true);
     });
 });

@@ -1,10 +1,11 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal } from '@phosphor-icons/react';
-import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
+import { CharacterProfile, ChatTheme, EmojiCategory, Emoji, AppID } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 import { useIncrementalReveal } from '../../hooks/useIncrementalReveal';
+import { isAppVisible } from '../../constants';
 
 interface ChatInputAreaProps {
     input: string;
@@ -287,6 +288,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
     const isDiscordStyle = inputStyle === 'discord';
     const isPixelStyle = inputStyle === 'pixel' || chromeStyle === 'pixel';
+    const showMeetupAction = isAppVisible(AppID.Date);
     const shellClass = acnh
         ? 'bg-[#a8d6bb] border-t-[3px] border-[#86c29a] shadow-[0_-3px_0_rgba(110,160,130,0.18)]'
         : chromeStyle === 'pixel'
@@ -648,13 +650,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onClickCapture={handleActionsClickCapture}
                         >
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
-                            {/* 见面：直接跳到该角色的见面模式（等同于进见面 App 并点击该角色） */}
-                            <button onClick={() => onPanelAction('meetup')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>
-                                    <Sparkle className="w-6 h-6" weight="fill" />
-                                </div>
-                                <span className="text-xs font-bold">见面</span>
-                            </button>
+                            {showMeetupAction && (
+                                <button onClick={() => onPanelAction('meetup')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>
+                                        <Sparkle className="w-6 h-6" weight="fill" />
+                                    </div>
+                                    <span className="text-xs font-bold">见面</span>
+                                </button>
+                            )}
 
                             <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 {acnh ? <AcnhActionTile kind="transfer" /> : (
