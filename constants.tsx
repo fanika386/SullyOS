@@ -125,6 +125,14 @@ export const HIDDEN_APP_IDS: ReadonlySet<AppID> = new Set<AppID>([
   AppID.Songwriting,
   AppID.VRWorld,
   AppID.Schedule,
+  AppID.Game,
+  AppID.Gallery,
+  AppID.XhsStock,
+  AppID.Guidebook,
+  AppID.LifeSim,
+  AppID.SpecialMoments,
+  AppID.Music,
+  AppID.CharCreatorDev,
 ]);
 
 export const isAppVisible = (appId: AppID): boolean => !HIDDEN_APP_IDS.has(appId);

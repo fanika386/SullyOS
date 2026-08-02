@@ -11,6 +11,7 @@ import MobileGameHome from '../components/os/MobileGameHome';
 import TamagotchiHome from '../components/os/TamagotchiHome';
 import { getLocalDailySchedule } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
+import { normalizeLauncherPinwheelOrder, type LauncherPinwheelCell } from '../utils/launcherVisibility';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -530,11 +531,9 @@ const Launcher: React.FC = () => {
   const availableGridIds = useMemo(() => availableGridApps.map(app => app.id), [availableGridApps]);
   const [launcherAppOrder, setLauncherAppOrder] = useState<string[]>(() => normalizeOrder(theme.launcherAppOrder, INSTALLED_APPS.filter(app => !DOCK_APPS.includes(app.id)).map(app => app.id)));
   const [launcherDockOrder, setLauncherDockOrder] = useState<string[]>(() => normalizeOrder(theme.launcherDockOrder, DOCK_APPS));
-  const [pinwheelOrder, setPinwheelOrder] = useState<Array<'music' | 'appsA' | 'appsB' | 'image'>>(() => {
-      const available = ['music', 'appsA', 'appsB', 'image'] as const;
-      const saved = theme.launcherPinwheelOrder || [];
-      return [...saved.filter((id, index) => available.includes(id) && saved.indexOf(id) === index), ...available.filter(id => !saved.includes(id))];
-  });
+  const [pinwheelOrder, setPinwheelOrder] = useState<LauncherPinwheelCell[]>(() =>
+      normalizeLauncherPinwheelOrder(theme.launcherPinwheelOrder)
+  );
   const launcherAppOrderRef = useRef(launcherAppOrder);
   const launcherDockOrderRef = useRef(launcherDockOrder);
   const pinwheelOrderRef = useRef(pinwheelOrder);
@@ -557,9 +556,7 @@ const Launcher: React.FC = () => {
   }, [layoutEditing, normalizeOrder, theme.launcherDockOrder]);
   useEffect(() => {
       if (layoutEditing) return;
-      const available = ['music', 'appsA', 'appsB', 'image'] as const;
-      const saved = theme.launcherPinwheelOrder || [];
-      const next = [...saved.filter((id, index) => available.includes(id) && saved.indexOf(id) === index), ...available.filter(id => !saved.includes(id))];
+      const next = normalizeLauncherPinwheelOrder(theme.launcherPinwheelOrder);
       pinwheelOrderRef.current = next;
       setPinwheelOrder(next);
   }, [layoutEditing, theme.launcherPinwheelOrder]);
@@ -739,7 +736,7 @@ const Launcher: React.FC = () => {
           launcherDockOrderRef.current = next;
           setLauncherDockOrder(next);
       } else if (kind === 'widget') {
-          const next = reorder(pinwheelOrderRef.current) as Array<'music' | 'appsA' | 'appsB' | 'image'>;
+          const next = reorder(pinwheelOrderRef.current) as LauncherPinwheelCell[];
           pinwheelOrderRef.current = next;
           setPinwheelOrder(next);
       }
