@@ -2,8 +2,9 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { Worldbook, WorldbookDepthRole, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
 import Modal from '../components/os/Modal';
-import { DiamondsFour, BookOpen, DownloadSimple, UploadSimple, WarningCircle } from '@phosphor-icons/react';
+import { DiamondsFour, BookOpen, DownloadSimple, UploadSimple, WarningCircle, MagnifyingGlass, X, Check } from '@phosphor-icons/react';
 import {
+    analyzeWorldbookDuplicates,
     parseStandardWorldbook,
     serializeStandardWorldbook,
     splitWorldbookKeywords,
@@ -11,8 +12,23 @@ import {
     WORLDBOOK_POSITION_LABELS,
     WORLDBOOK_ROLE_LABELS,
 } from '../utils/worldbook';
+import type { WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { shareOrDownloadFile } from '../utils/shareExport';
+
+const DEDUPE_SEVERITY_LABELS: Record<WorldbookDuplicateSeverity, string> = {
+    exact: '完全重复',
+    high: '高度重复',
+    medium: '疑似重复',
+    low: '轻度重叠',
+};
+
+const DEDUPE_SEVERITY_STYLES: Record<WorldbookDuplicateSeverity, string> = {
+    exact: 'bg-red-50 text-red-600 border-red-100',
+    high: 'bg-orange-50 text-orange-600 border-orange-100',
+    medium: 'bg-amber-50 text-amber-600 border-amber-100',
+    low: 'bg-sky-50 text-sky-600 border-sky-100',
+};
 
 const WorldbookApp: React.FC = () => {
     const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
@@ -23,6 +39,9 @@ const WorldbookApp: React.FC = () => {
     const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
     const [previewBookId, setPreviewBookId] = useState<string | null>(null);
     const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
+    const [dedupeMode, setDedupeMode] = useState(false);
+    const [selectedDedupeIds, setSelectedDedupeIds] = useState<Set<string>>(() => new Set());
+    const [dedupeAnalysis, setDedupeAnalysis] = useState<WorldbookDuplicateAnalysis | null>(null);
 
     const PAGE_SIZE = 12;
 
@@ -69,6 +88,14 @@ const WorldbookApp: React.FC = () => {
     }, [worldbooks]);
 
     const categoryNames = useMemo(() => Object.keys(groupedBooks), [groupedBooks]);
+    const selectedDedupeBooks = useMemo(
+        () => worldbooks.filter(book => selectedDedupeIds.has(book.id)),
+        [worldbooks, selectedDedupeIds],
+    );
+    const worldbookTitleById = useMemo(
+        () => new Map(worldbooks.map(book => [book.id, book.title])),
+        [worldbooks],
+    );
 
     // 编辑页「已有分组」建议列表：随输入实时过滤。
     // 不能用原生 datalist —— 分组一多，移动端 WebView 会把候选渲染成撑爆屏幕、无法滚动的巨型下拉。
@@ -244,6 +271,65 @@ const WorldbookApp: React.FC = () => {
 
     const togglePreview = (id: string) => {
         setPreviewBookId(previewBookId === id ? null : id);
+    };
+
+    const toggleDedupeMode = () => {
+        setDedupeMode(prev => {
+            const next = !prev;
+            if (!next) {
+                setSelectedDedupeIds(new Set());
+                setDedupeAnalysis(null);
+            }
+            return next;
+        });
+    };
+
+    const toggleDedupeSelection = (id: string) => {
+        setSelectedDedupeIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+        setDedupeAnalysis(null);
+    };
+
+    const toggleDedupeCategory = (event: React.MouseEvent, books: Worldbook[]) => {
+        event.stopPropagation();
+        setSelectedDedupeIds(prev => {
+            const next = new Set(prev);
+            const everySelected = books.every(book => next.has(book.id));
+            books.forEach(book => {
+                if (everySelected) next.delete(book.id);
+                else next.add(book.id);
+            });
+            return next;
+        });
+        setDedupeAnalysis(null);
+    };
+
+    const selectAllForDedupe = () => {
+        setSelectedDedupeIds(new Set(worldbooks.map(book => book.id)));
+        setDedupeAnalysis(null);
+    };
+
+    const clearDedupeSelection = () => {
+        setSelectedDedupeIds(new Set());
+        setDedupeAnalysis(null);
+    };
+
+    const runDedupeAnalysis = () => {
+        if (selectedDedupeBooks.length < 2) {
+            addToast('至少选择 2 本世界书才能检测', 'error');
+            return;
+        }
+        const analysis = analyzeWorldbookDuplicates(selectedDedupeBooks);
+        setDedupeAnalysis(analysis);
+        if (analysis.duplicatePairs > 0) {
+            addToast(`发现 ${analysis.duplicatePairs} 组疑似重复`, 'info');
+        } else {
+            addToast('未发现明显重复', 'success');
+        }
     };
 
     // --- Render ---
@@ -536,6 +622,14 @@ const WorldbookApp: React.FC = () => {
                         <div className="flex items-center gap-2">
                             <input ref={importRef} type="file" className="hidden" onChange={handleImport} />
                             <button
+                                onClick={toggleDedupeMode}
+                                className={`h-9 px-3 rounded-full shadow-sm flex items-center gap-1.5 active:scale-90 transition-all border ${dedupeMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white/80 text-indigo-500 border-white hover:bg-indigo-50'}`}
+                                title={dedupeMode ? '退出去重检测' : '去重检测'}
+                            >
+                                {dedupeMode ? <X size={15} weight="bold" /> : <MagnifyingGlass size={15} weight="bold" />}
+                                <span className="text-[11px] font-bold">去重</span>
+                            </button>
+                            <button
                                 onClick={() => setShowImportConfirm(true)}
                                 className="w-9 h-9 bg-white/80 text-indigo-500 border border-white rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform"
                                 title="导入标准世界书"
@@ -567,6 +661,127 @@ const WorldbookApp: React.FC = () => {
                     </p>
                 </div>
 
+                {dedupeMode && (
+                    <div className="rounded-2xl border border-slate-200/80 bg-white/85 backdrop-blur-md p-4 shadow-sm text-slate-600 animate-slide-up">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                                    <MagnifyingGlass size={16} weight="bold" className="text-indigo-500" /> 世界书去重检测
+                                </div>
+                                <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                                    已选 <span className="font-bold text-indigo-600">{selectedDedupeBooks.length}</span> / {worldbooks.length} 本。检测只在本机运行，不会自动删除或合并内容。
+                                </p>
+                            </div>
+                            <button
+                                onClick={toggleDedupeMode}
+                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center active:scale-90 transition-transform"
+                                title="退出去重检测"
+                            >
+                                <X size={16} weight="bold" />
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mt-4">
+                            <button
+                                onClick={selectAllForDedupe}
+                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform"
+                            >
+                                全选
+                            </button>
+                            <button
+                                onClick={clearDedupeSelection}
+                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform"
+                            >
+                                清空
+                            </button>
+                            <button
+                                onClick={runDedupeAnalysis}
+                                disabled={selectedDedupeBooks.length < 2}
+                                className="py-2.5 rounded-xl bg-indigo-500 text-white text-xs font-bold shadow-sm shadow-indigo-200 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                            >
+                                开始检测
+                            </button>
+                        </div>
+
+                        {dedupeAnalysis && (
+                            <div className="mt-4 space-y-3">
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+                                        <div className="text-[9px] text-slate-400 font-bold uppercase">比较组合</div>
+                                        <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.comparedPairs}</div>
+                                    </div>
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+                                        <div className="text-[9px] text-slate-400 font-bold uppercase">疑似重复</div>
+                                        <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.duplicatePairs}</div>
+                                    </div>
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+                                        <div className="text-[9px] text-slate-400 font-bold uppercase">最高重复率</div>
+                                        <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.highestDuplicateRate}%</div>
+                                    </div>
+                                </div>
+
+                                {dedupeAnalysis.findings.length === 0 ? (
+                                    <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-relaxed text-emerald-700">
+                                        未发现明显重复。当前阈值下，这批世界书可以先视为没有需要处理的重复内容。
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {dedupeAnalysis.findings.map(finding => (
+                                            <div key={finding.id} className="rounded-2xl border border-white/80 bg-white/80 p-4 shadow-sm">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="text-sm font-black text-slate-800 truncate">
+                                                            {finding.bookA.title} <span className="text-slate-300">↔</span> {finding.bookB.title}
+                                                        </div>
+                                                        <div className="mt-1 text-[11px] text-slate-500">{finding.verdict}</div>
+                                                    </div>
+                                                    <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black ${DEDUPE_SEVERITY_STYLES[finding.severity]}`}>
+                                                        {finding.duplicateRate}% · {DEDUPE_SEVERITY_LABELS[finding.severity]}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                                    {finding.reasons.map(reason => (
+                                                        <span key={reason} className="rounded-full bg-slate-50 border border-slate-100 px-2 py-1 text-[10px] text-slate-500">
+                                                            {reason}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                                {finding.evidence.length > 0 && (
+                                                    <div className="mt-3 space-y-2">
+                                                        {finding.evidence.map((item, index) => (
+                                                            <div key={`${finding.id}-ev-${index}`} className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-[11px] leading-relaxed text-slate-600">
+                                                                <div className="text-[9px] font-bold text-indigo-500 uppercase mb-1">片段相似 {item.similarity}%</div>
+                                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                                    <div className="whitespace-pre-wrap break-words">{item.sourceText}</div>
+                                                                    <div className="whitespace-pre-wrap break-words text-slate-500">{item.targetText}</div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                <div className="mt-3 rounded-xl bg-indigo-50/80 border border-indigo-100 px-3 py-2 text-[11px] leading-relaxed text-indigo-700">
+                                                    {finding.suggestions.map(suggestion => (
+                                                        <p key={suggestion} className="mb-1 last:mb-0">{suggestion}</p>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {dedupeAnalysis.cleanBookIds.length > 0 && (
+                                    <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[11px] leading-relaxed text-slate-500">
+                                        未卷入重复：
+                                        <span className="font-semibold text-slate-700">
+                                            {dedupeAnalysis.cleanBookIds.slice(0, 8).map(id => worldbookTitleById.get(id) || id).join('、')}
+                                        </span>
+                                        {dedupeAnalysis.cleanBookIds.length > 8 ? ` 等 ${dedupeAnalysis.cleanBookIds.length} 本` : ''}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {Object.keys(groupedBooks).length === 0 && (
                     <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-4 opacity-60">
                         <BookOpen size={48} className="text-slate-400" />
@@ -590,9 +805,17 @@ const WorldbookApp: React.FC = () => {
                             </div>
                             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-indigo-600 transition-colors">{category}</h3>
                             <span className="text-[9px] bg-white/50 px-1.5 rounded text-slate-400 border border-white/50">{books.length}</span>
+                            {dedupeMode && (
+                                <button
+                                    onClick={(event) => toggleDedupeCategory(event, books)}
+                                    className="ml-auto px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/70 text-indigo-500 border border-indigo-100 active:scale-95 transition-transform"
+                                >
+                                    {books.every(book => selectedDedupeIds.has(book.id)) ? '取消本组' : '选本组'}
+                                </button>
+                            )}
                             <button
                                 onClick={(event) => handleExportGroup(event, category, books)}
-                                className="ml-auto p-2 -my-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white/70 active:scale-90 transition-all"
+                                className={`${dedupeMode ? '' : 'ml-auto'} p-2 -my-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white/70 active:scale-90 transition-all`}
                                 title="导出该组为标准世界书"
                             >
                                 <DownloadSimple size={16} weight="bold" />
@@ -605,9 +828,19 @@ const WorldbookApp: React.FC = () => {
                                 <div key={book.id} className="bg-white/60 backdrop-blur-md rounded-2xl border border-white/60 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
                                     {/* Item Header */}
                                     <div 
-                                        onClick={() => togglePreview(book.id)}
-                                        className="p-4 cursor-pointer flex justify-between items-start"
+                                        onClick={() => dedupeMode ? toggleDedupeSelection(book.id) : togglePreview(book.id)}
+                                        className="p-4 cursor-pointer flex gap-3 justify-between items-start"
                                     >
+                                        {dedupeMode && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => { event.stopPropagation(); toggleDedupeSelection(book.id); }}
+                                                className={`mt-0.5 w-6 h-6 rounded-full border flex items-center justify-center shrink-0 transition-all ${selectedDedupeIds.has(book.id) ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm shadow-indigo-200' : 'bg-white/80 border-slate-200 text-transparent'}`}
+                                                title={selectedDedupeIds.has(book.id) ? '取消选择' : '选择这本'}
+                                            >
+                                                <Check size={13} weight="bold" />
+                                            </button>
+                                        )}
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <div className={`w-1.5 h-1.5 rounded-full ${previewBookId === book.id ? 'bg-indigo-400' : 'bg-slate-300'}`}></div>
@@ -626,6 +859,7 @@ const WorldbookApp: React.FC = () => {
                                             </div>
                                         </div>
                                         
+                                        {!dedupeMode && (
                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleEdit(book); }} 
@@ -642,6 +876,7 @@ const WorldbookApp: React.FC = () => {
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                                             </button>
                                         </div>
+                                        )}
                                     </div>
 
                                     {/* Expanded Content Preview */}

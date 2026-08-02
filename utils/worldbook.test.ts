@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MountedWorldbook } from '../types';
 import {
+    analyzeWorldbookDuplicates,
     injectWorldbookDepthEntries,
     isWorldbookEntryActive,
     parseStandardWorldbook,
@@ -181,5 +182,67 @@ describe('mounted worldbook synchronization', () => {
         });
         expect(mounted).not.toHaveProperty('createdAt');
         expect(mounted).not.toHaveProperty('updatedAt');
+    });
+});
+
+describe('worldbook duplicate analysis', () => {
+    it('flags exact content duplicates with merge advice', () => {
+        const analysis = analyzeWorldbookDuplicates([
+            book({ id: 'moon-a', title: '月城设定 A', content: '月城是一座悬浮在海上的城市。\n居民以潮汐钟计时。' }),
+            book({ id: 'moon-b', title: '月城设定 B', content: '月城是一座悬浮在海上的城市。\n居民以潮汐钟计时。' }),
+        ]);
+
+        expect(analysis.comparedPairs).toBe(1);
+        expect(analysis.duplicatePairs).toBe(1);
+        expect(analysis.highestDuplicateRate).toBe(100);
+        expect(analysis.findings[0]).toMatchObject({
+            bookA: { id: 'moon-a', title: '月城设定 A' },
+            bookB: { id: 'moon-b', title: '月城设定 B' },
+            severity: 'exact',
+        });
+        expect(analysis.findings[0].suggestions.join('\n')).toContain('合并');
+    });
+
+    it('detects partial semantic overlap while ignoring unrelated books', () => {
+        const analysis = analyzeWorldbookDuplicates([
+            book({
+                id: 'guild-a',
+                title: '观星公会',
+                key: ['观星公会', '星图'],
+                content: '观星公会负责维护星图。成员会记录流星雨、潮汐异常和月城航线。',
+            }),
+            book({
+                id: 'guild-b',
+                title: '星图管理员',
+                key: ['星图', '管理员'],
+                content: '星图管理员隶属于观星公会，主要工作是校准月城航线，并把潮汐异常写入档案。',
+            }),
+            book({
+                id: 'bakery',
+                title: '面包店',
+                key: ['面包'],
+                content: '港口面包店每天清晨开门，招牌是蜂蜜牛角包。',
+            }),
+        ]);
+
+        expect(analysis.comparedPairs).toBe(3);
+        expect(analysis.findings).toHaveLength(1);
+        expect(analysis.findings[0].bookA.id).toBe('guild-a');
+        expect(analysis.findings[0].bookB.id).toBe('guild-b');
+        expect(analysis.findings[0].duplicateRate).toBeGreaterThanOrEqual(45);
+        expect(analysis.cleanBookIds).toContain('bakery');
+    });
+
+    it('returns an empty finding list when selected books do not overlap', () => {
+        const analysis = analyzeWorldbookDuplicates([
+            book({ id: 'a', title: '森林', content: '森林里有古老神树和守林人。' }),
+            book({ id: 'b', title: '港口', content: '港口停靠商船，夜里点亮蓝色灯塔。' }),
+            book({ id: 'c', title: '学院', content: '学院教授炼金术、礼仪课和古代语言。' }),
+        ]);
+
+        expect(analysis.duplicatePairs).toBe(0);
+        expect(analysis.highestDuplicateRate).toBeLessThan(35);
+        expect(analysis.findings).toEqual([]);
+        expect(analysis.cleanBookIds.sort()).toEqual(['a', 'b', 'c']);
     });
 });
