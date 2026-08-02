@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useOS } from '../../context/OSContext';
-import { INSTALLED_APPS } from '../../constants';
+import { INSTALLED_APPS, isAppVisible } from '../../constants';
 import { createPortal } from 'react-dom';
 import { AppID, CharacterProfile, RoomItem, DailySchedule, ScheduleSlot } from '../../types';
 import { DB } from '../../utils/db';
@@ -354,7 +354,7 @@ const clockPhaseOf = (h: number): ClockPhase => (h >= 23 || h < 5) ? 'late' : h 
 const LiveBoard = React.memo<{
     customImg: string; fg: string; avatar?: string; night: boolean; dark: boolean;
     hh: string; mm: string; phase: ClockPhase;
-    onClock: () => void;
+    onClock?: () => void;
 }>(({ customImg, fg, avatar, night, dark, hh, mm, phase, onClock }) => {
     const darkFace = phase === 'night' || phase === 'late';
     const bgImg = customImg || avatar || '';
@@ -369,6 +369,22 @@ const LiveBoard = React.memo<{
     const scrim = dark
         ? 'linear-gradient(100deg, rgba(15,11,28,0.88) 0%, rgba(15,11,28,0.55) 48%, rgba(15,11,28,0.82) 100%)'
         : 'linear-gradient(100deg, rgba(253,250,246,0.92) 0%, rgba(253,250,246,0.62) 48%, rgba(253,250,246,0.88) 100%)';
+    const timeFace = (
+        <>
+            <div className="flex items-center justify-end gap-1.5 mb-1">
+                <span className="w-[11px] h-[11px]" style={{ color: sub }}>
+                    {darkFace ? ICON.moon : (
+                        <svg viewBox="0 0 24 24" className="w-full h-full" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="8" /><path d="M12 7.5V12l3 2" /></svg>
+                    )}
+                </span>
+                <span className="text-[7px] font-bold tracking-[0.34em]" style={{ fontFamily: FONT_PX, color: sub }}>{phase === 'late' ? '夜深啦' : 'TIME'}</span>
+            </div>
+            <div className="text-[24px] font-bold tabular-nums" style={{ fontFamily: FONT_PX, color: ink, textShadow: glow, letterSpacing: '0.06em' }}>{hh}:{mm}</div>
+            <div className="relative mt-1.5 h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg, transparent, var(--tg-macc) 30%, var(--tg-macc) 70%, transparent)' }}>
+                <span className="absolute -top-[4.5px] right-[18%] text-[9px] leading-none" style={{ color: 'var(--tg-macc-soft)' }}>✦</span>
+            </div>
+        </>
+    );
     return (
         <div className="absolute inset-x-4 z-[32] rounded-[1.15rem] overflow-hidden h-[4.8rem]"
             style={{ top: 'calc(var(--chrome-top, var(--safe-top, 0px)) + 4.55rem)', border: `1.5px solid ${PAL.frameSoft}`, boxShadow: dark ? '0 6px 16px rgba(0,0,0,0.35)' : '0 6px 16px var(--tg-glow25)' }}>
@@ -416,21 +432,16 @@ const LiveBoard = React.memo<{
                         <span className="text-[6px] tracking-[0.2em]" style={{ color: dim }}>·····</span>
                     </div>
                 </div>
-                {/* 右：电子时间（点一下进日程） */}
-                <button onClick={onClock} className="shrink-0 leading-none text-right active:scale-95 transition-transform">
-                    <div className="flex items-center justify-end gap-1.5 mb-1">
-                        <span className="w-[11px] h-[11px]" style={{ color: sub }}>
-                            {darkFace ? ICON.moon : (
-                                <svg viewBox="0 0 24 24" className="w-full h-full" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="8" /><path d="M12 7.5V12l3 2" /></svg>
-                            )}
-                        </span>
-                        <span className="text-[7px] font-bold tracking-[0.34em]" style={{ fontFamily: FONT_PX, color: sub }}>{phase === 'late' ? '夜深啦' : 'TIME'}</span>
+                {/* 右：电子时间；日程隐藏时只显示时间，不作为入口。 */}
+                {onClock ? (
+                    <button onClick={onClock} className="shrink-0 leading-none text-right active:scale-95 transition-transform">
+                        {timeFace}
+                    </button>
+                ) : (
+                    <div className="shrink-0 leading-none text-right">
+                        {timeFace}
                     </div>
-                    <div className="text-[24px] font-bold tabular-nums" style={{ fontFamily: FONT_PX, color: ink, textShadow: glow, letterSpacing: '0.06em' }}>{hh}:{mm}</div>
-                    <div className="relative mt-1.5 h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg, transparent, var(--tg-macc) 30%, var(--tg-macc) 70%, transparent)' }}>
-                        <span className="absolute -top-[4.5px] right-[18%] text-[9px] leading-none" style={{ color: 'var(--tg-macc-soft)' }}>✦</span>
-                    </div>
-                </button>
+                )}
             </div>
         </div>
     );
@@ -1252,7 +1263,7 @@ const TamagotchiHome: React.FC = () => {
                     {/* 直播看板（一整张 banner：图/渐变底 + 营业中/电子时间排版层），下面挂日程牌和 ✦ 挂饰 */}
                     <LiveBoard customImg={boardImg} fg={boardFg} avatar={char.avatar} night={night} dark={style.dark}
                         hh={hh} mm={mm} phase={clockPhaseOf(virtualTime.hours)}
-                        onClock={() => openApp(AppID.Schedule)} />
+                        onClock={isAppVisible(AppID.Schedule) ? () => openApp(AppID.Schedule) : undefined} />
                     <input type="file" ref={boardInputRef} className="hidden" accept="image/*" onChange={onBoardFile} />
                     <input type="color" ref={boardColorRef} className="hidden" value={boardFg} onChange={onBoardColor} />
                     <CeilingCharms />

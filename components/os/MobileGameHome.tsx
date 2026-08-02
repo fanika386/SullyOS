@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { Icons, INSTALLED_APPS } from '../../constants';
+import { getAppConfig, Icons, INSTALLED_APPS, isAppVisible } from '../../constants';
 import { AppID, CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
 import AppIcon from './AppIcon';
@@ -145,7 +145,7 @@ const renderGlyph = (iconKey: string, className: string) => {
 
 // 有手游插画就用插画（自带配色），否则回退到 Phosphor 线性图标
 const renderAppArt = (id: AppID): React.ReactNode =>
-    getMobileGameArt(id) || renderGlyph(INSTALLED_APPS.find(a => a.id === id)?.icon || 'Settings', 'w-full h-full');
+    getMobileGameArt(id) || renderGlyph(getAppConfig(id)?.icon || 'Settings', 'w-full h-full');
 
 // 星芒 ✦ 装饰：按 [x%, y%, 字号px, 颜色, 透明度] 散落
 type Sp = [number, number, number, string, number];
@@ -285,6 +285,8 @@ const MobileGameHome: React.FC = () => {
         () => INSTALLED_APPS.filter(a => a.id !== AppID.CharCreatorDev || devDebugVisible),
         [devDebugVisible]
     );
+    const visibleQuickEntries = useMemo(() => QUICK_ENTRIES.filter(e => isAppVisible(e.id)), []);
+    const visibleGridCards = useMemo(() => GRID_CARDS.filter(card => isAppVisible(card.id)), []);
 
     // 货币大卡
     const CoinCard: React.FC<{ icon: React.ReactNode; value: string }> = ({ icon, value }) => (
@@ -497,7 +499,7 @@ const MobileGameHome: React.FC = () => {
                 {/* ===== 快捷入口 ===== */}
                 <SectionLabel cn="快捷入口" en="SHORTCUTS" />
                 <div className="grid grid-cols-4 gap-2.5 animate-fade-in">
-                    {QUICK_ENTRIES.map(e => (
+                    {visibleQuickEntries.map(e => (
                         <button key={e.id} onClick={() => openApp(e.id)} className="flex flex-col items-center gap-2 active:scale-90 transition-transform">
                             <div className="relative w-[3.9rem] h-[3.9rem] rounded-[1.55rem] flex items-center justify-center" style={TILE}>
                                 <span className="absolute top-1.5 right-2 text-[8px]" style={{ color: PAL.pink, opacity: 0.85 }}>✦</span>
@@ -511,7 +513,7 @@ const MobileGameHome: React.FC = () => {
                 {/* ===== 应用目录 ===== */}
                 <SectionLabel cn="应用目录" en="INDEX" />
                 <div className="grid grid-cols-2 gap-3">
-                    {GRID_CARDS.map((card, i) => (
+                    {visibleGridCards.map((card, i) => (
                         <button key={card.id} onClick={() => openApp(card.id)}
                             className="relative h-[6.75rem] rounded-2xl p-4 flex flex-col justify-center text-left overflow-hidden active:scale-[0.97] transition-transform animate-fade-in"
                             style={CARD}>
@@ -570,7 +572,7 @@ const MobileGameHome: React.FC = () => {
 };
 
 const DockItem: React.FC<{ id: AppID; cn: string; badge?: number; onClick: () => void }> = ({ id, cn, badge = 0, onClick }) => {
-    const iconKey = INSTALLED_APPS.find(a => a.id === id)?.icon || 'Settings';
+    const iconKey = getAppConfig(id)?.icon || 'Settings';
     return (
         <button onClick={onClick} className="relative flex flex-col items-center gap-1 w-14 active:scale-90 transition-transform">
             <div className="relative w-7 h-7" style={{ color: PAL.grape }}>

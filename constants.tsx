@@ -78,7 +78,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   WorldHome: ({ className }) => <HouseLine className={className} weight="regular" />,
 };
 
-export const INSTALLED_APPS: AppConfig[] = [
+export const APP_CATALOG: AppConfig[] = [
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },
@@ -117,5 +117,21 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.CharCreatorDev, name: '捏脸·开发', icon: 'CharCreatorDev', color: 'amber' }, // 仅开发模式显示（Launcher 过滤）
   // { id: AppID.QQBridge, name: 'QQ 桥', icon: 'QQBridge', color: 'sky' }, // Hidden temporarily
 ];
+
+// 软删除清单：实现代码和数据结构先保留，只从桌面/抽屉入口隐藏。
+// 以后要恢复某个功能，先从这里移除对应 AppID。
+export const HIDDEN_APP_IDS: ReadonlySet<AppID> = new Set<AppID>([
+  AppID.Novel,
+  AppID.Songwriting,
+  AppID.VRWorld,
+  AppID.Schedule,
+]);
+
+export const isAppVisible = (appId: AppID): boolean => !HIDDEN_APP_IDS.has(appId);
+
+export const getAppConfig = (appId: AppID): AppConfig | undefined =>
+  APP_CATALOG.find(app => app.id === appId);
+
+export const INSTALLED_APPS: AppConfig[] = APP_CATALOG.filter(app => isAppVisible(app.id));
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];
