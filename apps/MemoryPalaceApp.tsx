@@ -12,7 +12,7 @@ import {
     DigestReportDB, PLATE_TITLES,
     bootstrapPlatesFromHistory, markPlateBootstrapDone,
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
-    scanExactDuplicateMemories, applyExactDuplicateMemoryDeletion,
+    scanExactDuplicateMemories, scanSemanticDuplicateMemories, applyExactDuplicateMemoryDeletion,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
@@ -21,6 +21,8 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 
 /** 手动总结面板：每页渲染多少条聊天记录（翻页，避免一次性塞几百条 DOM 卡顿） */
 const RANGE_PAGE_SIZE = 100;
+const DEDUP_ALL_CHARS = '__all__';
+const SEMANTIC_DEDUP_THRESHOLD = 0.96;
 
 /** 手动总结面板：把毫秒时间戳格式化成「2026-03-20 14:30」 */
 const fmtRangeTs = (ts: number): string => {
@@ -541,6 +543,14 @@ export default function MemoryPalaceApp() {
     // 完整去重：扫描所有角色、按角色内部精确正文去重
     const [deduping, setDeduping] = useState(false);
     const [dedupResult, setDedupResult] = useState<string | null>(null);
+    const [dedupTargetCharId, setDedupTargetCharId] = useState<string>(DEDUP_ALL_CHARS);
+    const [dedupMode, setDedupMode] = useState<'exact' | 'semantic'>('exact');
+
+    useEffect(() => {
+        if (dedupTargetCharId !== DEDUP_ALL_CHARS && !characters.some(c => c.id === dedupTargetCharId)) {
+            setDedupTargetCharId(DEDUP_ALL_CHARS);
+        }
+    }, [characters, dedupTargetCharId]);
 
     // 导出记忆（接入外置记忆库）
     const [exporting, setExporting] = useState(false);
@@ -1605,15 +1615,30 @@ export default function MemoryPalaceApp() {
         }
     };
 
-    /** 完整去重：先扫描并询问，确认后删除同一角色内正文完全相同的重复节点。 */
+    /** 完整去重：先按用户选定范围扫描并询问，确认后删除重复节点。 */
     const handleDeduplicateAllMemories = async () => {
         if (deduping) return;
         setDeduping(true);
-        setDedupResult('正在扫描所有记忆节点…');
+        const selectedChar = dedupTargetCharId === DEDUP_ALL_CHARS
+            ? null
+            : characters.find(c => c.id === dedupTargetCharId) || null;
+        const scanCharIds = selectedChar ? [selectedChar.id] : undefined;
+        const scopeLabel = selectedChar ? `【${selectedChar.name}】` : '所有角色';
+        const modeLabel = dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';
+        setDedupResult(`正在扫描${scopeLabel}的记忆节点…`);
         try {
-            const preview = await scanExactDuplicateMemories();
+            const preview = dedupMode === 'semantic'
+                ? await scanSemanticDuplicateMemories({
+                    charIds: scanCharIds,
+                    threshold: SEMANTIC_DEDUP_THRESHOLD,
+                })
+                : await scanExactDuplicateMemories({ charIds: scanCharIds });
+
             if (preview.duplicateCount === 0) {
-                setDedupResult(`[ok]扫描 ${preview.scannedCount} 条记忆，没有发现正文完全相同的重复项`);
+                const vectorPart = dedupMode === 'semantic'
+                    ? `，其中 ${preview.vectorizedCount || 0} 条有向量参与近似判断`
+                    : '';
+                setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆${vectorPart}，没有发现重复项`);
                 return;
             }
 
@@ -1621,20 +1646,30 @@ export default function MemoryPalaceApp() {
             const sample = preview.groups.slice(0, 5).map((group, idx) => {
                 const owner = nameById.get(group.charId) || group.charId;
                 const text = group.content.length > 48 ? `${group.content.slice(0, 48)}…` : group.content;
-                return `${idx + 1}. ${owner}：${text}（${group.nodes.length} 条，删除 ${group.duplicates.length} 条）`;
+                const score = dedupMode === 'semantic' && group.maxSimilarity
+                    ? `，最高相似度 ${(group.maxSimilarity * 100).toFixed(1)}%`
+                    : '';
+                return `${idx + 1}. ${owner}：${text}（${group.nodes.length} 条，删除 ${group.duplicates.length} 条${score}）`;
             }).join('\n');
             const more = preview.groups.length > 5 ? `\n…还有 ${preview.groups.length - 5} 组` : '';
+            const semanticWarning = dedupMode === 'semantic'
+                ? `\n近似语义模式只比较已有向量的记忆，阈值 ${(SEMANTIC_DEDUP_THRESHOLD * 100).toFixed(0)}%。它能抓到改写版重复，但比精确模式更需要你确认示例。\n`
+                : '';
             const confirmed = confirm(
                 `完整去重扫描完成：\n\n` +
+                `- 范围：${scopeLabel}\n` +
+                `- 模式：${modeLabel}\n` +
                 `- 扫描 ${preview.scannedCount} 条记忆，覆盖 ${preview.charCount} 个角色\n` +
+                (dedupMode === 'semantic' ? `- 参与近似判断的向量记忆：${preview.vectorizedCount || 0} 条\n` : '') +
                 `- 找到 ${preview.groups.length} 组重复，将删除 ${preview.duplicateCount} 条\n\n` +
-                `范围：同一角色内部的所有房间、事件盒、归档记忆；跨角色相同内容不会删除。\n` +
+                `扫描边界：同一角色内部的所有房间、事件盒、归档记忆；跨角色相同内容不会删除。\n` +
                 `保留规则：每组保留 1 条（优先保留置顶 / 事件盒总结 / 未归档 / 访问更多 / 更重要 / 更早创建）。\n\n` +
+                semanticWarning +
                 `示例：\n${sample}${more}\n\n` +
                 `确定现在删除这些重复记忆吗？`
             );
             if (!confirmed) {
-                setDedupResult(`[warn]已取消：扫描发现 ${preview.duplicateCount} 条重复记忆，未删除`);
+                setDedupResult(`[warn]已取消：${scopeLabel} · ${modeLabel} 发现 ${preview.duplicateCount} 条重复记忆，未删除`);
                 return;
             }
 
@@ -1645,7 +1680,7 @@ export default function MemoryPalaceApp() {
             const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
             const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
             setDedupResult(
-                `${result.failed.length > 0 ? '[warn]' : '[ok]'}扫描 ${result.scannedCount} 条，删除 ${result.deleted}/${result.duplicateCount} 条重复记忆${remotePart}${failPart}`
+                `${result.failed.length > 0 ? '[warn]' : '[ok]'}${scopeLabel} · ${modeLabel}：扫描 ${result.scannedCount} 条，删除 ${result.deleted}/${result.duplicateCount} 条重复记忆${remotePart}${failPart}`
             );
             await loadStats();
         } catch (e: any) {
@@ -4103,11 +4138,66 @@ create table if not exists memory_vectors (
                 <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 16, padding: 16, border: '1px solid #cbd5e1' }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Icon name="search" size={14} />
-                        <span>维护工具：完整去重</span>
+                        <span>维护工具：记忆去重</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, lineHeight: 1.7 }}>
-                        扫描所有角色的记忆宫殿节点，只在<b>同一角色内部</b>比较正文完全相同的记忆。
+                        先选择要扫描的角色，再选择去重方式。扫描边界始终是<b>同一角色内部</b>，
                         找到重复后会先弹窗列出数量和示例，确认后才删除；删除时会同步清理本地向量、关联和事件盒引用。
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10, marginBottom: 12 }}>
+                        <div>
+                            <label className={labelClass}>扫描角色</label>
+                            <select
+                                value={dedupTargetCharId}
+                                onChange={e => setDedupTargetCharId(e.target.value)}
+                                className={inputClass}
+                                style={{ fontFamily: 'inherit' }}
+                                disabled={deduping}
+                            >
+                                <option value={DEDUP_ALL_CHARS}>所有角色</option>
+                                {characters.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>扫描方式</label>
+                            <div style={{
+                                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6,
+                                padding: 3, borderRadius: 12, background: '#e2e8f0',
+                            }}>
+                                {([
+                                    ['exact', '正文完全相同'],
+                                    ['semantic', '近似语义'],
+                                ] as const).map(([mode, label]) => {
+                                    const active = dedupMode === mode;
+                                    return (
+                                        <button
+                                            key={mode}
+                                            onClick={() => setDedupMode(mode)}
+                                            disabled={deduping}
+                                            style={{
+                                                padding: '8px 6px', borderRadius: 9, border: 'none',
+                                                fontSize: 11, fontWeight: 800,
+                                                color: active ? '#334155' : '#64748b',
+                                                background: active ? 'white' : 'transparent',
+                                                boxShadow: active ? '0 1px 4px rgba(15,23,42,0.10)' : undefined,
+                                                cursor: deduping ? 'not-allowed' : 'pointer',
+                                            }}
+                                        >
+                                            {label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ fontSize: 10, color: '#64748b', marginTop: 6, lineHeight: 1.6 }}>
+                                {dedupMode === 'semantic'
+                                    ? `近似语义会比较已有向量，相似度达到 ${(SEMANTIC_DEDUP_THRESHOLD * 100).toFixed(0)}% 才列入候选；没有向量的记忆会跳过。`
+                                    : '精确模式只删除正文完全一样的重复记忆，最稳。'}
+                            </div>
+                        </div>
                     </div>
 
                     {dedupResult && (
@@ -4133,7 +4223,7 @@ create table if not exists memory_vectors (
                         {deduping ? '处理中…' : (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                                 <Icon name="trash" size={13} />
-                                <span>扫描并清理重复记忆</span>
+                                <span>{dedupMode === 'semantic' ? '扫描近似重复记忆' : '扫描完全重复记忆'}</span>
                             </span>
                         )}
                     </button>

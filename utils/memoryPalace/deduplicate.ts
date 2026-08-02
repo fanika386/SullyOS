@@ -1,7 +1,8 @@
-import { MemoryLinkDB, MemoryNodeDB, MemoryVectorDB } from './db';
+import { ensureFloat32, MemoryLinkDB, MemoryNodeDB, MemoryVectorDB } from './db';
+import { cosineSimilarity } from './embedding';
 import { removeMemoryFromBox } from './eventBox';
 import { deleteVector } from './supabaseVector';
-import type { MemoryNode, RemoteVectorConfig } from './types';
+import type { MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
 
 export interface ExactDuplicateMemoryGroup {
     charId: string;
@@ -9,6 +10,7 @@ export interface ExactDuplicateMemoryGroup {
     keep: MemoryNode;
     duplicates: MemoryNode[];
     nodes: MemoryNode[];
+    maxSimilarity?: number;
 }
 
 export interface ExactDuplicateMemoryPreview {
@@ -16,6 +18,8 @@ export interface ExactDuplicateMemoryPreview {
     charCount: number;
     groups: ExactDuplicateMemoryGroup[];
     duplicateCount: number;
+    vectorizedCount?: number;
+    threshold?: number;
 }
 
 export interface ExactDuplicateDeletionResult extends ExactDuplicateMemoryPreview {
@@ -29,6 +33,11 @@ export interface ExactDuplicateScanOptions {
     charIds?: string[];
 }
 
+export interface SemanticDuplicateScanOptions extends ExactDuplicateScanOptions {
+    threshold?: number;
+    minContentLength?: number;
+}
+
 export interface ExactDuplicateDeletionOptions {
     remoteConfig?: RemoteVectorConfig;
     onProgress?: (deleted: number, total: number) => void;
@@ -36,6 +45,10 @@ export interface ExactDuplicateDeletionOptions {
 
 function duplicateContentKey(content: string): string {
     return (content || '').trim();
+}
+
+function hasComparableContent(node: MemoryNode, minContentLength: number): boolean {
+    return duplicateContentKey(node.content).length >= minContentLength;
 }
 
 function compareCanonicalNode(a: MemoryNode, b: MemoryNode): number {
@@ -110,6 +123,129 @@ export async function scanExactDuplicateMemories(
     const allowed = options.charIds?.length ? new Set(options.charIds) : null;
     const nodes = allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes;
     return findExactDuplicateMemoryGroups(nodes);
+}
+
+class DisjointSet {
+    private parent = new Map<string, string>();
+
+    add(id: string): void {
+        if (!this.parent.has(id)) this.parent.set(id, id);
+    }
+
+    find(id: string): string {
+        const p = this.parent.get(id);
+        if (!p || p === id) return id;
+        const root = this.find(p);
+        this.parent.set(id, root);
+        return root;
+    }
+
+    union(a: string, b: string): void {
+        this.add(a);
+        this.add(b);
+        const ra = this.find(a);
+        const rb = this.find(b);
+        if (ra !== rb) this.parent.set(rb, ra);
+    }
+}
+
+function vectorByMemoryId(vectors: MemoryVector[]): Map<string, Float32Array> {
+    const map = new Map<string, Float32Array>();
+    for (const v of vectors) {
+        map.set(v.memoryId, ensureFloat32(v.vector));
+    }
+    return map;
+}
+
+export async function scanSemanticDuplicateMemories(
+    options: SemanticDuplicateScanOptions = {},
+): Promise<ExactDuplicateMemoryPreview> {
+    const threshold = options.threshold ?? 0.96;
+    const minContentLength = options.minContentLength ?? 8;
+    const allNodes = await MemoryNodeDB.getAll();
+    const allowed = options.charIds?.length ? new Set(options.charIds) : null;
+    const nodes = allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes;
+    const charIds = new Set(nodes.map(node => node.charId));
+    const nodesByChar = new Map<string, MemoryNode[]>();
+    for (const node of nodes) {
+        const bucket = nodesByChar.get(node.charId);
+        if (bucket) bucket.push(node);
+        else nodesByChar.set(node.charId, [node]);
+    }
+
+    const groups: ExactDuplicateMemoryGroup[] = [];
+    let vectorizedCount = 0;
+
+    for (const [charId, charNodes] of nodesByChar) {
+        const vectors = vectorByMemoryId(await MemoryVectorDB.getAllByCharId(charId));
+        const candidates = charNodes.filter(node =>
+            vectors.has(node.id) && hasComparableContent(node, minContentLength)
+        );
+        vectorizedCount += candidates.length;
+        if (candidates.length < 2) continue;
+
+        const dsu = new DisjointSet();
+        for (const node of candidates) dsu.add(node.id);
+
+        const pairSimilarity = new Map<string, number>();
+        for (let i = 0; i < candidates.length; i++) {
+            const a = candidates[i];
+            const av = vectors.get(a.id)!;
+            for (let j = i + 1; j < candidates.length; j++) {
+                const b = candidates[j];
+                const bv = vectors.get(b.id)!;
+                const similarity = cosineSimilarity(av, bv);
+                if (similarity >= threshold) {
+                    dsu.union(a.id, b.id);
+                    pairSimilarity.set(`${a.id}\u0000${b.id}`, similarity);
+                }
+            }
+        }
+
+        const clusters = new Map<string, MemoryNode[]>();
+        for (const node of candidates) {
+            const root = dsu.find(node.id);
+            const bucket = clusters.get(root);
+            if (bucket) bucket.push(node);
+            else clusters.set(root, [node]);
+        }
+
+        for (const cluster of clusters.values()) {
+            if (cluster.length < 2) continue;
+            const ordered = cluster.slice().sort(compareCanonicalNode);
+            let maxSimilarity = 0;
+            for (let i = 0; i < ordered.length; i++) {
+                for (let j = i + 1; j < ordered.length; j++) {
+                    const direct = pairSimilarity.get(`${ordered[i].id}\u0000${ordered[j].id}`)
+                        ?? pairSimilarity.get(`${ordered[j].id}\u0000${ordered[i].id}`)
+                        ?? cosineSimilarity(vectors.get(ordered[i].id)!, vectors.get(ordered[j].id)!);
+                    if (direct > maxSimilarity) maxSimilarity = direct;
+                }
+            }
+            groups.push({
+                charId,
+                content: duplicateContentKey(ordered[0].content),
+                keep: ordered[0],
+                duplicates: ordered.slice(1),
+                nodes: ordered,
+                maxSimilarity,
+            });
+        }
+    }
+
+    groups.sort((a, b) => {
+        if (a.charId !== b.charId) return a.charId.localeCompare(b.charId);
+        return a.keep.createdAt - b.keep.createdAt;
+    });
+
+    return {
+        scannedCount: nodes.length,
+        charCount: charIds.size,
+        groups,
+        duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
+        vectorizedCount,
+        threshold,
+    };
 }
 
 async function deleteMemoryNodeCascade(

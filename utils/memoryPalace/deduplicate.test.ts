@@ -3,6 +3,7 @@ import { EventBoxDB, MemoryLinkDB, MemoryNodeDB, MemoryVectorDB } from './db';
 import {
     applyExactDuplicateMemoryDeletion,
     findExactDuplicateMemoryGroups,
+    scanSemanticDuplicateMemories,
 } from './deduplicate';
 import type { EventBox, MemoryLink, MemoryNode, MemoryVector } from './types';
 
@@ -106,5 +107,53 @@ describe('记忆宫殿全局精确去重', () => {
         expect(await MemoryLinkDB.getByNodeId(duplicate.id)).toEqual([]);
         const updatedBox = await EventBoxDB.getById(box.id);
         expect(updatedBox?.liveMemoryIds).toEqual([other.id]);
+    });
+
+    it('近似语义扫描按角色范围找高相似向量，不跨角色误并', async () => {
+        const targetChar = 'dedup_semantic_target';
+        const otherChar = 'dedup_semantic_other';
+        const targetA = makeNode('dedup_semantic_a', targetChar, {
+            content: 'TA 说以后想在雨天一起去海边散步。',
+            embedded: true,
+            createdAt: 1000,
+        });
+        const targetB = makeNode('dedup_semantic_b', targetChar, {
+            content: 'TA 提到将来希望下雨的时候和我去海边走走。',
+            embedded: true,
+            createdAt: 2000,
+        });
+        const targetC = makeNode('dedup_semantic_c', targetChar, {
+            content: 'TA 今天讨论了考试复习计划。',
+            embedded: true,
+            createdAt: 3000,
+        });
+        const otherSameMeaning = makeNode('dedup_semantic_other_same', otherChar, {
+            content: 'TA 提到将来希望下雨的时候和我去海边走走。',
+            embedded: true,
+            createdAt: 4000,
+        });
+        await MemoryNodeDB.saveMany([targetA, targetB, targetC, otherSameMeaning]);
+
+        const vectors: MemoryVector[] = [
+            { memoryId: targetA.id, charId: targetChar, vector: new Float32Array([1, 0, 0]), dimensions: 3, model: 'test' },
+            { memoryId: targetB.id, charId: targetChar, vector: new Float32Array([0.99, 0.01, 0]), dimensions: 3, model: 'test' },
+            { memoryId: targetC.id, charId: targetChar, vector: new Float32Array([0, 1, 0]), dimensions: 3, model: 'test' },
+            { memoryId: otherSameMeaning.id, charId: otherChar, vector: new Float32Array([0.99, 0.01, 0]), dimensions: 3, model: 'test' },
+        ];
+        await MemoryVectorDB.saveMany(vectors);
+
+        const preview = await scanSemanticDuplicateMemories({
+            charIds: [targetChar],
+            threshold: 0.95,
+        });
+
+        expect(preview.scannedCount).toBe(3);
+        expect(preview.vectorizedCount).toBe(3);
+        expect(preview.charCount).toBe(1);
+        expect(preview.groups).toHaveLength(1);
+        expect(preview.duplicateCount).toBe(1);
+        expect(preview.groups[0].keep.id).toBe(targetA.id);
+        expect(preview.groups[0].duplicates.map(n => n.id)).toEqual([targetB.id]);
+        expect(preview.groups[0].maxSimilarity).toBeGreaterThanOrEqual(0.99);
     });
 });

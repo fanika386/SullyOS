@@ -81,10 +81,11 @@ export {
 export { wipeAllMemoryPalace } from './wipe';
 export type { WipeResult } from './wipe';
 
-// 全局维护：精确正文去重
+// 全局维护：精确正文 / 近似语义去重
 export {
     findExactDuplicateMemoryGroups,
     scanExactDuplicateMemories,
+    scanSemanticDuplicateMemories,
     applyExactDuplicateMemoryDeletion,
     deduplicateExactMemories,
 } from './deduplicate';
@@ -92,6 +93,7 @@ export type {
     ExactDuplicateMemoryGroup,
     ExactDuplicateMemoryPreview,
     ExactDuplicateDeletionResult,
+    SemanticDuplicateScanOptions,
 } from './deduplicate';
 
 // 导出 / 导入（接入外置记忆库、跨设备迁移用）
