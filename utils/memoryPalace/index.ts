@@ -84,8 +84,10 @@ export type { WipeResult } from './wipe';
 // 全局维护：精确正文 / 近似语义去重
 export {
     findExactDuplicateMemoryGroups,
+    buildAiDuplicatePreviewFromSuggestions,
     scanExactDuplicateMemories,
     scanSemanticDuplicateMemories,
+    scanAiSemanticDuplicateMemories,
     applyExactDuplicateMemoryDeletion,
     deduplicateExactMemories,
 } from './deduplicate';
@@ -94,6 +96,8 @@ export type {
     ExactDuplicateMemoryPreview,
     ExactDuplicateDeletionResult,
     SemanticDuplicateScanOptions,
+    AiDuplicateLLMConfig,
+    AiSemanticDuplicateScanOptions,
 } from './deduplicate';
 
 // 导出 / 导入（接入外置记忆库、跨设备迁移用）

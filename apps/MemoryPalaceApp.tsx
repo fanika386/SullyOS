@@ -12,9 +12,9 @@ import {
     DigestReportDB, PLATE_TITLES,
     bootstrapPlatesFromHistory, markPlateBootstrapDone,
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
-    scanExactDuplicateMemories, scanSemanticDuplicateMemories, applyExactDuplicateMemoryDeletion,
+    scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, applyExactDuplicateMemoryDeletion,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
 import type { Message } from '../types';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -23,6 +23,9 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 const RANGE_PAGE_SIZE = 100;
 const DEDUP_ALL_CHARS = '__all__';
 const SEMANTIC_DEDUP_THRESHOLD = 0.96;
+const DEDUP_AI_SOURCE_MEMORY = 'memoryPalace';
+const DEDUP_AI_SOURCE_MAIN = 'main';
+type DedupMode = 'exact' | 'semantic' | 'ai';
 
 /** 手动总结面板：把毫秒时间戳格式化成「2026-03-20 14:30」 */
 const fmtRangeTs = (ts: number): string => {
@@ -544,13 +547,22 @@ export default function MemoryPalaceApp() {
     const [deduping, setDeduping] = useState(false);
     const [dedupResult, setDedupResult] = useState<string | null>(null);
     const [dedupTargetCharId, setDedupTargetCharId] = useState<string>(DEDUP_ALL_CHARS);
-    const [dedupMode, setDedupMode] = useState<'exact' | 'semantic'>('exact');
+    const [dedupMode, setDedupMode] = useState<DedupMode>('exact');
+    const [dedupAiApiSource, setDedupAiApiSource] = useState<string>(DEDUP_AI_SOURCE_MEMORY);
+    const [dedupReviewPreview, setDedupReviewPreview] = useState<ExactDuplicateMemoryPreview | null>(null);
+    const [dedupSelectedDeleteIds, setDedupSelectedDeleteIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         if (dedupTargetCharId !== DEDUP_ALL_CHARS && !characters.some(c => c.id === dedupTargetCharId)) {
             setDedupTargetCharId(DEDUP_ALL_CHARS);
         }
     }, [characters, dedupTargetCharId]);
+
+    useEffect(() => {
+        setDedupReviewPreview(null);
+        setDedupSelectedDeleteIds(new Set());
+        setDedupResult(null);
+    }, [dedupMode, dedupTargetCharId, dedupAiApiSource]);
 
     // 导出记忆（接入外置记忆库）
     const [exporting, setExporting] = useState(false);
@@ -1615,18 +1627,105 @@ export default function MemoryPalaceApp() {
         }
     };
 
+    const resolveDedupAiConfig = (): { config: AiDuplicateLLMConfig; label: string } | null => {
+        const clean = (config: { baseUrl?: string; apiKey?: string; model?: string } | null | undefined): AiDuplicateLLMConfig | null => {
+            const baseUrl = (config?.baseUrl || '').trim();
+            const apiKey = (config?.apiKey || '').trim();
+            const model = (config?.model || '').trim();
+            return baseUrl && apiKey && model ? { baseUrl, apiKey, model } : null;
+        };
+
+        if (dedupAiApiSource === DEDUP_AI_SOURCE_MEMORY) {
+            const config = clean(memoryPalaceConfig.lightLLM);
+            return config ? { config, label: '记忆宫殿副 API' } : null;
+        }
+
+        if (dedupAiApiSource === DEDUP_AI_SOURCE_MAIN) {
+            const config = clean(apiConfig);
+            return config ? { config, label: '当前聊天主 API' } : null;
+        }
+
+        if (dedupAiApiSource.startsWith('preset:')) {
+            const presetId = dedupAiApiSource.slice('preset:'.length);
+            const preset = apiPresets.find(p => p.id === presetId);
+            const config = clean(preset?.config);
+            return config ? { config, label: `预设：${preset?.name || presetId}` } : null;
+        }
+
+        return null;
+    };
+
+    const collectDedupDuplicateIds = (preview: ExactDuplicateMemoryPreview): Set<string> => {
+        const ids = new Set<string>();
+        for (const group of preview.groups) {
+            for (const node of group.duplicates) ids.add(node.id);
+        }
+        return ids;
+    };
+
+    const buildSelectedDedupPreview = (
+        preview: ExactDuplicateMemoryPreview,
+        selectedIds: Set<string>,
+    ): ExactDuplicateMemoryPreview => {
+        const groups = preview.groups
+            .map(group => {
+                const duplicates = group.duplicates.filter(node => selectedIds.has(node.id));
+                return duplicates.length > 0
+                    ? { ...group, duplicates, nodes: [group.keep, ...duplicates] }
+                    : null;
+            })
+            .filter(Boolean) as ExactDuplicateMemoryPreview['groups'];
+
+        return {
+            ...preview,
+            groups,
+            duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
+        };
+    };
+
     /** 完整去重：先按用户选定范围扫描并询问，确认后删除重复节点。 */
     const handleDeduplicateAllMemories = async () => {
         if (deduping) return;
         setDeduping(true);
+        setDedupReviewPreview(null);
+        setDedupSelectedDeleteIds(new Set());
         const selectedChar = dedupTargetCharId === DEDUP_ALL_CHARS
             ? null
             : characters.find(c => c.id === dedupTargetCharId) || null;
         const scanCharIds = selectedChar ? [selectedChar.id] : undefined;
         const scopeLabel = selectedChar ? `【${selectedChar.name}】` : '所有角色';
-        const modeLabel = dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';
+        const modeLabel = dedupMode === 'ai' ? 'AI 语义去重' : dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';
         setDedupResult(`正在扫描${scopeLabel}的记忆节点…`);
         try {
+            if (dedupMode === 'ai') {
+                const aiConfig = resolveDedupAiConfig();
+                if (!aiConfig) {
+                    setDedupResult('[err]AI 去重需要先选择一套已完整配置的 API（Base URL / Key / Model 都要有）');
+                    return;
+                }
+
+                const charNameById = Object.fromEntries(characters.map(c => [c.id, c.name]));
+                const preview = await scanAiSemanticDuplicateMemories({
+                    charIds: scanCharIds,
+                    llmConfig: aiConfig.config,
+                    charNameById,
+                    onProgress: (completed, total, charId) => {
+                        const owner = charNameById[charId] || charId;
+                        setDedupResult(`AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`);
+                    },
+                });
+
+                if (preview.duplicateCount === 0) {
+                    setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，没有发现可合并的语义重复项`);
+                    return;
+                }
+
+                setDedupReviewPreview(preview);
+                setDedupSelectedDeleteIds(collectDedupDuplicateIds(preview));
+                setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。请在下方勾选后再删除。`);
+                return;
+            }
+
             const preview = dedupMode === 'semantic'
                 ? await scanSemanticDuplicateMemories({
                     charIds: scanCharIds,
@@ -1685,6 +1784,49 @@ export default function MemoryPalaceApp() {
             await loadStats();
         } catch (e: any) {
             setDedupResult(`[err]去重失败：${e?.message || e}`);
+        } finally {
+            setDeduping(false);
+        }
+    };
+
+    const handleDeleteSelectedAiDedupMemories = async () => {
+        if (!dedupReviewPreview || deduping) return;
+        const selectedPreview = buildSelectedDedupPreview(dedupReviewPreview, dedupSelectedDeleteIds);
+        if (selectedPreview.duplicateCount === 0) {
+            setDedupResult('[warn]还没有勾选要删除的 AI 候选记忆');
+            return;
+        }
+
+        const selectedChar = dedupTargetCharId === DEDUP_ALL_CHARS
+            ? null
+            : characters.find(c => c.id === dedupTargetCharId) || null;
+        const scopeLabel = selectedChar ? `【${selectedChar.name}】` : '所有角色';
+        const confirmed = confirm(
+            `删除已勾选的 ${selectedPreview.duplicateCount} 条 AI 候选重复记忆吗？\n\n` +
+            `范围：${scopeLabel}\n` +
+            `这些记忆会从本地节点、向量、关联和事件盒引用里同步清理。未勾选的候选不会删除。`
+        );
+        if (!confirmed) {
+            setDedupResult(`[warn]已取消：AI 候选里有 ${selectedPreview.duplicateCount} 条已勾选，未删除`);
+            return;
+        }
+
+        setDeduping(true);
+        try {
+            const result = await applyExactDuplicateMemoryDeletion(selectedPreview, {
+                remoteConfig: remoteVectorConfig,
+                onProgress: (deleted, total) => setDedupResult(`正在删除 ${deleted}/${total} 条已勾选记忆…`),
+            });
+            const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
+            const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
+            setDedupResult(
+                `${result.failed.length > 0 ? '[warn]' : '[ok]'}AI 语义去重：删除 ${result.deleted}/${result.duplicateCount} 条已勾选重复记忆${remotePart}${failPart}`
+            );
+            setDedupReviewPreview(null);
+            setDedupSelectedDeleteIds(new Set());
+            await loadStats();
+        } catch (e: any) {
+            setDedupResult(`[err]删除失败：${e?.message || e}`);
         } finally {
             setDeduping(false);
         }
@@ -4142,7 +4284,7 @@ create table if not exists memory_vectors (
                     </div>
                     <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, lineHeight: 1.7 }}>
                         先选择要扫描的角色，再选择去重方式。扫描边界始终是<b>同一角色内部</b>，
-                        找到重复后会先弹窗列出数量和示例，确认后才删除；删除时会同步清理本地向量、关联和事件盒引用。
+                        删除前一定会先让你确认；删除时会同步清理本地向量、关联和事件盒引用。
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10, marginBottom: 12 }}>
@@ -4165,12 +4307,13 @@ create table if not exists memory_vectors (
                         <div>
                             <label className={labelClass}>扫描方式</label>
                             <div style={{
-                                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6,
+                                display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6,
                                 padding: 3, borderRadius: 12, background: '#e2e8f0',
                             }}>
                                 {([
                                     ['exact', '正文完全相同'],
                                     ['semantic', '近似语义'],
+                                    ['ai', 'AI 语义判断'],
                                 ] as const).map(([mode, label]) => {
                                     const active = dedupMode === mode;
                                     return (
@@ -4193,11 +4336,43 @@ create table if not exists memory_vectors (
                                 })}
                             </div>
                             <div style={{ fontSize: 10, color: '#64748b', marginTop: 6, lineHeight: 1.6 }}>
-                                {dedupMode === 'semantic'
+                                {dedupMode === 'ai'
+                                    ? 'AI 会读取所选范围内的记忆正文，判断“意思完全重复”的候选；它只给建议，不会自动删除。'
+                                    : dedupMode === 'semantic'
                                     ? `近似语义会比较已有向量，相似度达到 ${(SEMANTIC_DEDUP_THRESHOLD * 100).toFixed(0)}% 才列入候选；没有向量的记忆会跳过。`
                                     : '精确模式只删除正文完全一样的重复记忆，最稳。'}
                             </div>
                         </div>
+
+                        {dedupMode === 'ai' && (
+                            <div style={{
+                                padding: 12, borderRadius: 12,
+                                background: '#fff7ed', border: '1px solid #fed7aa',
+                            }}>
+                                <label className={labelClass}>AI 扫描使用的 API</label>
+                                <select
+                                    value={dedupAiApiSource}
+                                    onChange={e => setDedupAiApiSource(e.target.value)}
+                                    className={inputClass}
+                                    style={{ fontFamily: 'inherit', marginBottom: 8 }}
+                                    disabled={deduping}
+                                >
+                                    <option value={DEDUP_AI_SOURCE_MEMORY}>
+                                        记忆宫殿副 API（默认，推荐便宜模型）
+                                    </option>
+                                    <option value={DEDUP_AI_SOURCE_MAIN}>当前聊天主 API</option>
+                                    {apiPresets.map(p => (
+                                        <option key={p.id} value={`preset:${p.id}`}>预设：{p.name}</option>
+                                    ))}
+                                </select>
+                                <div style={{ fontSize: 10, color: '#9a3412', lineHeight: 1.7, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                                    <span style={{ marginTop: 1, flexShrink: 0 }}><Icon name="warning" size={12} /></span>
+                                    <span>
+                                        注意，这里会花一点 API 钱哦。建议选便宜、中文还可以的模型；它只是帮你扫重复建议，不需要昂贵对话模型。
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {dedupResult && (
@@ -4206,6 +4381,131 @@ create table if not exists memory_vectors (
                             color: dedupResult.startsWith('[err]') ? '#dc2626' : dedupResult.startsWith('[warn]') ? '#d97706' : dedupResult.startsWith('[ok]') ? '#166534' : '#64748b',
                         }}>
                             <StatusMessage msg={dedupResult} />
+                        </div>
+                    )}
+
+                    {dedupReviewPreview && dedupReviewPreview.groups.length > 0 && (
+                        <div style={{
+                            marginBottom: 12, border: '1px solid #cbd5e1', borderRadius: 12,
+                            background: 'white', overflow: 'hidden',
+                        }}>
+                            <div style={{
+                                padding: '10px 12px', borderBottom: '1px solid #e2e8f0',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: 12, fontWeight: 800, color: '#334155' }}>AI 候选审核</div>
+                                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                                        已勾选 {dedupSelectedDeleteIds.size}/{dedupReviewPreview.duplicateCount} 条建议删除项
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                    <button
+                                        onClick={() => setDedupSelectedDeleteIds(collectDedupDuplicateIds(dedupReviewPreview))}
+                                        disabled={deduping}
+                                        style={{
+                                            padding: '5px 8px', borderRadius: 8, border: '1px solid #cbd5e1',
+                                            background: '#f8fafc', color: '#475569', fontSize: 10, fontWeight: 700,
+                                            cursor: deduping ? 'not-allowed' : 'pointer',
+                                        }}
+                                    >
+                                        全选
+                                    </button>
+                                    <button
+                                        onClick={() => setDedupSelectedDeleteIds(new Set())}
+                                        disabled={deduping}
+                                        style={{
+                                            padding: '5px 8px', borderRadius: 8, border: '1px solid #cbd5e1',
+                                            background: '#f8fafc', color: '#475569', fontSize: 10, fontWeight: 700,
+                                            cursor: deduping ? 'not-allowed' : 'pointer',
+                                        }}
+                                    >
+                                        清空
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div style={{ maxHeight: 420, overflow: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {dedupReviewPreview.groups.map((group, groupIndex) => {
+                                    const owner = characters.find(c => c.id === group.charId)?.name || group.charId;
+                                    const confidence = typeof group.confidence === 'number'
+                                        ? ` · 置信度 ${(group.confidence * 100).toFixed(0)}%`
+                                        : '';
+                                    return (
+                                        <div key={`${group.keep.id}-${groupIndex}`} style={{
+                                            border: '1px solid #e2e8f0', borderRadius: 10,
+                                            padding: 10, background: '#f8fafc',
+                                        }}>
+                                            <div style={{ fontSize: 11, fontWeight: 800, color: '#334155', marginBottom: 8 }}>
+                                                {owner} · 候选组 {groupIndex + 1}{confidence}
+                                            </div>
+                                            <div style={{
+                                                padding: 8, borderRadius: 8, background: '#ecfdf5',
+                                                border: '1px solid #bbf7d0', marginBottom: 8,
+                                            }}>
+                                                <div style={{ fontSize: 10, fontWeight: 800, color: '#166534', marginBottom: 4 }}>保留</div>
+                                                <div style={{ fontSize: 11, color: '#14532d', lineHeight: 1.6, wordBreak: 'break-word' }}>
+                                                    {group.keep.content}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                {group.duplicates.map(node => (
+                                                    <label key={node.id} style={{
+                                                        display: 'flex', gap: 8, alignItems: 'flex-start',
+                                                        padding: 8, borderRadius: 8, background: 'white',
+                                                        border: '1px solid #fee2e2', cursor: deduping ? 'not-allowed' : 'pointer',
+                                                    }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={dedupSelectedDeleteIds.has(node.id)}
+                                                            disabled={deduping}
+                                                            onChange={e => {
+                                                                const checked = e.currentTarget.checked;
+                                                                setDedupSelectedDeleteIds(prev => {
+                                                                    const next = new Set(prev);
+                                                                    if (checked) next.add(node.id);
+                                                                    else next.delete(node.id);
+                                                                    return next;
+                                                                });
+                                                            }}
+                                                            style={{ marginTop: 2, flexShrink: 0 }}
+                                                        />
+                                                        <span style={{ flex: 1 }}>
+                                                            <span style={{ display: 'block', fontSize: 10, fontWeight: 800, color: '#991b1b', marginBottom: 3 }}>
+                                                                建议删除
+                                                            </span>
+                                                            <span style={{ display: 'block', fontSize: 11, color: '#7f1d1d', lineHeight: 1.6, wordBreak: 'break-word' }}>
+                                                                {node.content}
+                                                            </span>
+                                                        </span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            {group.aiReason && (
+                                                <div style={{ marginTop: 8, fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
+                                                    AI 理由：{group.aiReason}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div style={{ padding: 10, borderTop: '1px solid #e2e8f0' }}>
+                                <button
+                                    onClick={handleDeleteSelectedAiDedupMemories}
+                                    disabled={deduping || dedupSelectedDeleteIds.size === 0}
+                                    style={{
+                                        width: '100%', padding: '10px 0', borderRadius: 12,
+                                        border: 'none', fontWeight: 800, fontSize: 13,
+                                        color: 'white',
+                                        background: (deduping || dedupSelectedDeleteIds.size === 0) ? '#cbd5e1' : '#dc2626',
+                                        cursor: (deduping || dedupSelectedDeleteIds.size === 0) ? 'not-allowed' : 'pointer',
+                                    }}
+                                >
+                                    删除已勾选的 {dedupSelectedDeleteIds.size} 条
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -4223,7 +4523,7 @@ create table if not exists memory_vectors (
                         {deduping ? '处理中…' : (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                                 <Icon name="trash" size={13} />
-                                <span>{dedupMode === 'semantic' ? '扫描近似重复记忆' : '扫描完全重复记忆'}</span>
+                                <span>{dedupMode === 'ai' ? 'AI 扫描语义重复' : dedupMode === 'semantic' ? '扫描近似重复记忆' : '扫描完全重复记忆'}</span>
                             </span>
                         )}
                     </button>

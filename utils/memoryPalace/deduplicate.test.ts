@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EventBoxDB, MemoryLinkDB, MemoryNodeDB, MemoryVectorDB } from './db';
 import {
     applyExactDuplicateMemoryDeletion,
+    buildAiDuplicatePreviewFromSuggestions,
     findExactDuplicateMemoryGroups,
     scanSemanticDuplicateMemories,
 } from './deduplicate';
@@ -155,5 +156,71 @@ describe('记忆宫殿全局精确去重', () => {
         expect(preview.groups[0].keep.id).toBe(targetA.id);
         expect(preview.groups[0].duplicates.map(n => n.id)).toEqual([targetB.id]);
         expect(preview.groups[0].maxSimilarity).toBeGreaterThanOrEqual(0.99);
+    });
+
+    it('把 AI 返回的重复建议整理成可审核的删除预览，不接受幻觉 ID 或跨角色合并', () => {
+        const nodes = [
+            makeNode('dedup_ai_keep', 'dedup_ai_char_a', {
+                content: 'TA 喜欢在雨天和我去海边散步。',
+                importance: 8,
+                createdAt: 1000,
+            }),
+            makeNode('dedup_ai_dup', 'dedup_ai_char_a', {
+                content: 'TA 说下雨的时候想和我一起去海边走走。',
+                importance: 4,
+                createdAt: 2000,
+            }),
+            makeNode('dedup_ai_other_char', 'dedup_ai_char_b', {
+                content: 'TA 说下雨的时候想和我一起去海边走走。',
+                createdAt: 3000,
+            }),
+        ];
+
+        const preview = buildAiDuplicatePreviewFromSuggestions(nodes, {
+            groups: [{
+                keepId: 'dedup_ai_keep',
+                duplicateIds: ['dedup_ai_dup', 'dedup_ai_missing', 'dedup_ai_other_char'],
+                reason: '两条都只表达同一个雨天海边散步偏好。',
+                confidence: 1.2,
+            }],
+        });
+
+        expect(preview.scannedCount).toBe(3);
+        expect(preview.charCount).toBe(2);
+        expect(preview.groups).toHaveLength(1);
+        expect(preview.duplicateCount).toBe(1);
+        expect(preview.groups[0].keep.id).toBe('dedup_ai_keep');
+        expect(preview.groups[0].duplicates.map(n => n.id)).toEqual(['dedup_ai_dup']);
+        expect(preview.groups[0].aiReason).toBe('两条都只表达同一个雨天海边散步偏好。');
+        expect(preview.groups[0].confidence).toBe(1);
+    });
+
+    it('AI 建议没有有效 keepId 时按本地保留规则选择 canonical 记忆', () => {
+        const nodes = [
+            makeNode('dedup_ai_late', 'dedup_ai_char_c', {
+                content: 'TA 害怕被突然冷落。',
+                importance: 3,
+                createdAt: 3000,
+            }),
+            makeNode('dedup_ai_important', 'dedup_ai_char_c', {
+                content: 'TA 担心被突然冷落。',
+                importance: 9,
+                createdAt: 2000,
+            }),
+        ];
+
+        const preview = buildAiDuplicatePreviewFromSuggestions(nodes, {
+            groups: [{
+                ids: ['dedup_ai_late', 'dedup_ai_important'],
+                keepId: 'dedup_ai_missing',
+                reason: '同一个被冷落的担忧。',
+                confidence: 0.76,
+            }],
+        });
+
+        expect(preview.groups).toHaveLength(1);
+        expect(preview.groups[0].keep.id).toBe('dedup_ai_important');
+        expect(preview.groups[0].duplicates.map(n => n.id)).toEqual(['dedup_ai_late']);
+        expect(preview.groups[0].confidence).toBe(0.76);
     });
 });

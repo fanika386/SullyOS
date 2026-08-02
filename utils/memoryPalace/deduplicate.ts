@@ -3,6 +3,7 @@ import { cosineSimilarity } from './embedding';
 import { removeMemoryFromBox } from './eventBox';
 import { deleteVector } from './supabaseVector';
 import type { MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
+import { extractJson, safeFetchJson } from '../safeApi';
 
 export interface ExactDuplicateMemoryGroup {
     charId: string;
@@ -11,6 +12,8 @@ export interface ExactDuplicateMemoryGroup {
     duplicates: MemoryNode[];
     nodes: MemoryNode[];
     maxSimilarity?: number;
+    aiReason?: string;
+    confidence?: number;
 }
 
 export interface ExactDuplicateMemoryPreview {
@@ -20,6 +23,7 @@ export interface ExactDuplicateMemoryPreview {
     duplicateCount: number;
     vectorizedCount?: number;
     threshold?: number;
+    aiCallCount?: number;
 }
 
 export interface ExactDuplicateDeletionResult extends ExactDuplicateMemoryPreview {
@@ -38,9 +42,34 @@ export interface SemanticDuplicateScanOptions extends ExactDuplicateScanOptions 
     minContentLength?: number;
 }
 
+export interface AiDuplicateLLMConfig {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+
+export interface AiSemanticDuplicateScanOptions extends ExactDuplicateScanOptions {
+    llmConfig: AiDuplicateLLMConfig;
+    charNameById?: Record<string, string>;
+    minContentLength?: number;
+    onProgress?: (completed: number, total: number, charId: string) => void;
+}
+
 export interface ExactDuplicateDeletionOptions {
     remoteConfig?: RemoteVectorConfig;
     onProgress?: (deleted: number, total: number) => void;
+}
+
+interface AiRawDuplicateGroup {
+    keepId?: unknown;
+    canonicalId?: unknown;
+    duplicateIds?: unknown;
+    duplicates?: unknown;
+    ids?: unknown;
+    memoryIds?: unknown;
+    nodeIds?: unknown;
+    reason?: unknown;
+    confidence?: unknown;
 }
 
 function duplicateContentKey(content: string): string {
@@ -245,6 +274,249 @@ export async function scanSemanticDuplicateMemories(
         duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
         vectorizedCount,
         threshold,
+    };
+}
+
+function asCleanId(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function asIdList(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map(item => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object') {
+                const obj = item as { id?: unknown; memoryId?: unknown; nodeId?: unknown };
+                return asCleanId(obj.id) || asCleanId(obj.memoryId) || asCleanId(obj.nodeId) || '';
+            }
+            return '';
+        })
+        .map(id => id.trim())
+        .filter(Boolean);
+}
+
+function getAiRawGroups(raw: unknown): AiRawDuplicateGroup[] {
+    if (Array.isArray(raw)) return raw.filter(item => item && typeof item === 'object') as AiRawDuplicateGroup[];
+    if (!raw || typeof raw !== 'object') return [];
+    const obj = raw as { groups?: unknown; duplicates?: unknown; suggestions?: unknown };
+    for (const candidate of [obj.groups, obj.duplicates, obj.suggestions]) {
+        if (Array.isArray(candidate)) {
+            return candidate.filter(item => item && typeof item === 'object') as AiRawDuplicateGroup[];
+        }
+    }
+    return [];
+}
+
+function clampConfidence(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    return Math.max(0, Math.min(1, value));
+}
+
+function uniqueExistingNodes(ids: string[], byId: Map<string, MemoryNode>): MemoryNode[] {
+    const seen = new Set<string>();
+    const nodes: MemoryNode[] = [];
+    for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const node = byId.get(id);
+        if (node) nodes.push(node);
+    }
+    return nodes;
+}
+
+export function buildAiDuplicatePreviewFromSuggestions(
+    nodes: MemoryNode[],
+    rawSuggestions: unknown,
+): ExactDuplicateMemoryPreview {
+    const byId = new Map(nodes.map(node => [node.id, node]));
+    const charIds = new Set(nodes.map(node => node.charId));
+    const usedDuplicateIds = new Set<string>();
+    const groups: ExactDuplicateMemoryGroup[] = [];
+
+    for (const rawGroup of getAiRawGroups(rawSuggestions)) {
+        const keepId = asCleanId(rawGroup.keepId) || asCleanId(rawGroup.canonicalId);
+        const ids = [
+            ...(keepId ? [keepId] : []),
+            ...asIdList(rawGroup.duplicateIds),
+            ...asIdList(rawGroup.duplicates),
+            ...asIdList(rawGroup.ids),
+            ...asIdList(rawGroup.memoryIds),
+            ...asIdList(rawGroup.nodeIds),
+        ];
+        const existingNodes = uniqueExistingNodes(ids, byId);
+        if (existingNodes.length < 2) continue;
+
+        let keep = keepId ? byId.get(keepId) || null : null;
+        if (!keep || !existingNodes.some(node => node.id === keep!.id)) {
+            keep = existingNodes.slice().sort(compareCanonicalNode)[0];
+        }
+
+        let sameCharNodes = existingNodes.filter(node => node.charId === keep!.charId);
+        if (sameCharNodes.length < 2) continue;
+
+        if (usedDuplicateIds.has(keep.id)) {
+            const replacement = sameCharNodes
+                .filter(node => !usedDuplicateIds.has(node.id))
+                .sort(compareCanonicalNode)[0];
+            if (!replacement) continue;
+            keep = replacement;
+            sameCharNodes = sameCharNodes.filter(node => node.charId === keep!.charId);
+        }
+
+        const duplicates = sameCharNodes
+            .filter(node => node.id !== keep!.id && !usedDuplicateIds.has(node.id))
+            .sort(compareCanonicalNode);
+        if (duplicates.length === 0) continue;
+
+        for (const node of duplicates) usedDuplicateIds.add(node.id);
+        const reason = typeof rawGroup.reason === 'string' ? rawGroup.reason.trim() : undefined;
+        const confidence = clampConfidence(rawGroup.confidence);
+        groups.push({
+            charId: keep.charId,
+            content: duplicateContentKey(keep.content),
+            keep,
+            duplicates,
+            nodes: [keep, ...duplicates],
+            aiReason: reason || undefined,
+            confidence,
+        });
+    }
+
+    groups.sort((a, b) => {
+        if (a.charId !== b.charId) return a.charId.localeCompare(b.charId);
+        return a.keep.createdAt - b.keep.createdAt;
+    });
+
+    return {
+        scannedCount: nodes.length,
+        charCount: charIds.size,
+        groups,
+        duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
+    };
+}
+
+function clipForAi(content: string): string {
+    const text = duplicateContentKey(content);
+    return text.length > 700 ? `${text.slice(0, 700)}...` : text;
+}
+
+async function requestAiDuplicateSuggestions(
+    charId: string,
+    charName: string,
+    nodes: MemoryNode[],
+    llmConfig: AiDuplicateLLMConfig,
+): Promise<unknown> {
+    const payload = nodes.map(node => ({
+        id: node.id,
+        content: clipForAi(node.content),
+        room: node.room,
+        createdAt: node.createdAt,
+        archived: !!node.archived,
+    }));
+
+    const systemPrompt = `你是记忆宫殿维护工具里的中文语义去重审计员。
+你的任务是从同一个角色的记忆列表中找出"意义完全相同、只保留一条也不会丢信息"的重复项。
+只标记事实、偏好、承诺、状态完全等价的重复记忆；不要把相似但有新细节、不同时间进展、因果补充、情绪变化的记忆归为重复。
+只能使用用户提供的 id，不要发明 id。跨角色重复不在本次任务中考虑。
+返回严格 JSON，不要 Markdown，不要解释。格式：
+{
+  "groups": [
+    {
+      "keepId": "建议保留的记忆 id",
+      "duplicateIds": ["建议删除的重复记忆 id"],
+      "reason": "为什么这些记忆可以视为完全重复",
+      "confidence": 0.0
+    }
+  ]
+}
+confidence 是 0 到 1 的数字。没有重复时返回 {"groups":[]}`;
+
+    const userPrompt = `角色：${charName || charId}
+记忆列表 JSON：
+${JSON.stringify(payload, null, 2)}`;
+
+    const data = await safeFetchJson(
+        `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${llmConfig.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: llmConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                temperature: 0.1,
+                max_tokens: 6000,
+                stream: false,
+            }),
+        },
+        1,
+        180_000,
+        { appName: '记忆宫殿', purpose: 'AI语义去重扫描', characterId: charId },
+    );
+
+    const reply = data.choices?.[0]?.message?.content || '';
+    const parsed = extractJson(reply);
+    if (!parsed) {
+        throw new Error(`AI 没有返回可解析的 JSON：${reply.slice(0, 160)}`);
+    }
+    return parsed;
+}
+
+export async function scanAiSemanticDuplicateMemories(
+    options: AiSemanticDuplicateScanOptions,
+): Promise<ExactDuplicateMemoryPreview> {
+    const llmConfig = options.llmConfig;
+    if (!llmConfig?.baseUrl || !llmConfig.apiKey || !llmConfig.model) {
+        throw new Error('AI 去重需要完整的 baseUrl、apiKey 和 model');
+    }
+
+    const minContentLength = options.minContentLength ?? 4;
+    const allNodes = await MemoryNodeDB.getAll();
+    const allowed = options.charIds?.length ? new Set(options.charIds) : null;
+    const nodes = (allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes)
+        .filter(node => hasComparableContent(node, minContentLength));
+    const charIds = new Set(nodes.map(node => node.charId));
+    const nodesByChar = new Map<string, MemoryNode[]>();
+    for (const node of nodes) {
+        const bucket = nodesByChar.get(node.charId);
+        if (bucket) bucket.push(node);
+        else nodesByChar.set(node.charId, [node]);
+    }
+
+    const charBatches = Array.from(nodesByChar.entries()).filter(([, charNodes]) => charNodes.length >= 2);
+    const groups: ExactDuplicateMemoryGroup[] = [];
+    let completed = 0;
+
+    for (const [charId, charNodes] of charBatches) {
+        const raw = await requestAiDuplicateSuggestions(
+            charId,
+            options.charNameById?.[charId] || charId,
+            charNodes,
+            llmConfig,
+        );
+        const preview = buildAiDuplicatePreviewFromSuggestions(charNodes, raw);
+        groups.push(...preview.groups);
+        completed++;
+        options.onProgress?.(completed, charBatches.length, charId);
+    }
+
+    groups.sort((a, b) => {
+        if (a.charId !== b.charId) return a.charId.localeCompare(b.charId);
+        return a.keep.createdAt - b.keep.createdAt;
+    });
+
+    return {
+        scannedCount: nodes.length,
+        charCount: charIds.size,
+        groups,
+        duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
+        aiCallCount: charBatches.length,
     };
 }
 
