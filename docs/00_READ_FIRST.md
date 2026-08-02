@@ -19,6 +19,23 @@
 
 如果任务涉及产品能力、二改、运行方式或部署注意，再读 `README.md` 的相关章节。
 
+## 二改工作流
+
+本仓库当前用于用户二改时，默认在同一个 GitHub repo `fanika386/SullyOS` 内工作：
+
+- `master`：原版 / Production 分支，对应 Cloudflare 正式地址 `https://sullyos-5fy.pages.dev/`。
+- `sullyos-remix`：用户二改分支，对应 Cloudflare 分支预览地址 `https://sullyos-remix.sullyos-5fy.pages.dev/`。
+
+二改不是另一个独立 repo，而是同一 repo 的独立分支。新 Task 如果用户要改二改版，先确认当前分支是 `sullyos-remix`，不要把二改提交混进 `master`，除非用户明确要求把二改提升到正式版。
+
+二改默认收尾流程：
+
+1. 检查 `git status --short` 和当前分支。
+2. 按任务修改并做风险匹配的验证。
+3. 检查 diff / status。
+4. `git add`、`git commit`、`git push` 到 `sullyos-remix`。
+5. 等 Cloudflare Pages 自动更新二改预览地址。
+
 ## 开发前检查
 
 开始任何修改前，至少确认：

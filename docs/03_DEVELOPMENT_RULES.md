@@ -131,6 +131,17 @@ Task 不以“代码写完”作为完成标准。默认完成流程是：
 - Cloudflare Worker 是可选后端能力，不是所有部署都必须启用。
 - 二改发布时要按 README 替换自己的 Worker / 代理，不要默认占用作者公共实例。
 
+## 用户二改分支与 Cloudflare
+
+当前用户二改不是独立 repo，而是同一 GitHub repo `fanika386/SullyOS` 的 `sullyos-remix` 分支。
+
+- `master` 保留原版 / Production，对应 `https://sullyos-5fy.pages.dev/`。
+- `sullyos-remix` 是二改工作区，对应 `https://sullyos-remix.sullyos-5fy.pages.dev/`。
+- 处理用户二改需求时，默认在 `sullyos-remix` 上修改、验证、commit、push。
+- push 到 `sullyos-remix` 后，Cloudflare Pages 会自动更新二改预览地址。
+- 不要把二改改动提交到 `master`，除非用户明确要求切正式版或合并。
+- `Dev Debug` / `BuildBadge` 在非 `master` 分支默认显示，这是作者内建开发版 UI。要保留排障能力就不要设置 `VITE_HIDE_BUILD_BADGE=1`。
+
 ## 文档同步规则
 
 任何 Task 在结束之前，都必须检查：

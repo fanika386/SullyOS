@@ -67,6 +67,42 @@
 - 后续新增 App、Worker、AI 链路、DB store、备份格式或部署流程时，请同步更新 `01_PROJECT_MAP.md`、`02_ARCHITECTURE.md` 和本文件。
 - `CLAUDE.md` 仍是专项文档导航入口；本次未替换它。
 
+## 2026-08-02 - 固化二改分支部署流程
+
+本次任务：
+
+记录用户 SullyOS 二改分支、Cloudflare 预览地址和后续 Codex Task 的默认收尾流程。
+
+修改内容：
+
+- 更新 `docs/00_READ_FIRST.md`，新增二改工作流入口，明确 `master` 是原版 Production，`sullyos-remix` 是用户二改分支。
+- 更新 `docs/03_DEVELOPMENT_RULES.md`，新增用户二改分支与 Cloudflare 规则，要求二改默认在 `sullyos-remix` 修改、验证、commit、push。
+
+新增模块：
+
+- 无。
+
+影响模块：
+
+- 文档体系。未修改业务代码、构建配置、测试、Worker 或运行时代码。
+
+是否修改业务逻辑：
+
+- 否。
+
+是否更新 `01_PROJECT_MAP.md`：
+
+- 否。本次没有新增、移动或删除模块。
+
+是否更新 `02_ARCHITECTURE.md`：
+
+- 否。本次没有改变架构或数据流，只固化现有分支部署工作流。
+
+后续注意：
+
+- 新任务如果是用户二改，先确认当前分支是 `sullyos-remix`。
+- push 到 `sullyos-remix` 后，Cloudflare Pages 会自动更新 `https://sullyos-remix.sullyos-5fy.pages.dev/`。
+
 ## 2026-07-22 - 文档规则完善
 
 本次任务：
