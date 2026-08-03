@@ -9,6 +9,7 @@ import { LEGACY_DEFAULT_WALLPAPER, isLegacyDefaultWallpaper, shouldPreserveLegac
 import { migrateSharkpanAssets } from '../utils/sharkpanAssetMigration';
 import { writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
 import { encodeVectorsForBackup } from '../utils/memoryPalace/db';
+import { DEFAULT_AUTO_SUMMARY_THRESHOLD, normalizeAutoSummaryThreshold } from '../utils/memoryPalace/pipeline';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
 import { runVRSession } from '../utils/vrWorld/runSession';
@@ -199,6 +200,8 @@ const defaultRealtimeConfig: RealtimeConfig = {
 
 // 记忆宫殿全局配置（所有角色共用 embedding、副 LLM 和 rerank）
 export interface MemoryPalaceGlobalConfig {
+  /** 自动总结触发条数：缓冲区达到该条数后才交给记忆宫殿处理 */
+  autoSummaryThreshold: number;
   embedding: {
     baseUrl: string;
     apiKey: string;
@@ -223,6 +226,7 @@ export interface MemoryPalaceGlobalConfig {
 }
 
 const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
+  autoSummaryThreshold: DEFAULT_AUTO_SUMMARY_THRESHOLD,
   embedding: { baseUrl: '', apiKey: '', model: 'BAAI/bge-m3', dimensions: 1024 },
   lightLLM: { baseUrl: '', apiKey: '', model: '' },
   rerank: { enabled: false, baseUrl: '', apiKey: '', model: 'BAAI/bge-reranker-v2-m3', topN: 5 },
@@ -836,7 +840,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
   const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
-    try { const s = localStorage.getItem('os_memory_palace_config'); return s ? { ...defaultMemoryPalaceConfig, ...JSON.parse(s) } : defaultMemoryPalaceConfig; } catch { return defaultMemoryPalaceConfig; }
+    try {
+      const s = localStorage.getItem('os_memory_palace_config');
+      if (!s) return defaultMemoryPalaceConfig;
+      const parsed = JSON.parse(s);
+      return {
+        ...defaultMemoryPalaceConfig,
+        ...parsed,
+        autoSummaryThreshold: normalizeAutoSummaryThreshold(parsed?.autoSummaryThreshold),
+      };
+    } catch { return defaultMemoryPalaceConfig; }
   });
   const defaultRemoteVectorConfig = { enabled: false, supabaseUrl: '', supabaseAnonKey: '', initialized: false };
   const [remoteVectorConfig, setRemoteVectorConfig] = useState(() => {
@@ -2545,6 +2558,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
     const newConfig: MemoryPalaceGlobalConfig = {
+      autoSummaryThreshold: normalizeAutoSummaryThreshold(
+        updates.autoSummaryThreshold ?? memoryPalaceConfig.autoSummaryThreshold ?? DEFAULT_AUTO_SUMMARY_THRESHOLD,
+      ),
       embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },
       lightLLM: { ...memoryPalaceConfig.lightLLM, ...(updates.lightLLM || {}) },
       rerank: { ...memoryPalaceConfig.rerank, ...(updates.rerank || {}) },

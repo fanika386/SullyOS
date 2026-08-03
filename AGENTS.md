@@ -17,6 +17,8 @@ pnpm run guard:remix
 
 If the current branch is not `sullyos-remix`, stop and report the mismatch instead of patching files.
 
+When the active worktree already contains unrelated or other-conversation changes, do not continue remix feature work in that shared tree. Create a fresh isolated clone/worktree for the task, check out `sullyos-remix`, rerun the branch/status/remix guard there, and keep the current conversation's edits inside that isolated directory. Use the existing dirty/shared tree only for inspection unless the user explicitly asks to modify it.
+
 Cloudflare Pages is the deployment source for the remix preview. Do not treat GitHub Pages, Vercel, Netlify, or a local dev server as the remix deployment target unless the user explicitly changes the deployment setup.
 
 Do not edit `.github/workflows/deploy-pages.yml` as a way to deploy the remix. That workflow is for GitHub Pages, not the established Cloudflare Pages remix preview.

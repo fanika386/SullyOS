@@ -42,7 +42,12 @@ export { expandAndFormat } from './formatter';
 
 // 集成
 export type { LightLLMConfig, PipelineResult, DiaryIngestResult } from './pipeline';
-export { retrieveMemories, injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark, ingestDiaryToPalace } from './pipeline';
+export {
+    retrieveMemories, injectMemoryPalace, processNewMessages,
+    getMemoryPalaceHighWaterMark, ingestDiaryToPalace,
+    DEFAULT_AUTO_SUMMARY_THRESHOLD, MIN_AUTO_SUMMARY_THRESHOLD, MAX_AUTO_SUMMARY_THRESHOLD,
+    getMemoryPalaceAutoSummaryThreshold, normalizeAutoSummaryThreshold,
+} from './pipeline';
 
 // 期盼
 export {

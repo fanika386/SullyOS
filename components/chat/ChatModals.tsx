@@ -1,10 +1,16 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
+import {
+    DEFAULT_AUTO_SUMMARY_THRESHOLD,
+    MAX_AUTO_SUMMARY_THRESHOLD,
+    MIN_AUTO_SUMMARY_THRESHOLD,
+    normalizeAutoSummaryThreshold,
+} from '../../utils/memoryPalace';
 
 interface ChatModalsProps {
     modalType: string;
@@ -121,6 +127,9 @@ interface ChatModalsProps {
     vectorizePendingCount?: number | null;
     /** 处理中的逐轮进度文案，如「第 2 轮 · 剩余 340 条」 */
     vectorizeProgress?: string;
+    /** 自动总结触发条数（全局）：缓冲区达到该条数后自动处理 */
+    memoryPalaceAutoSummaryThreshold?: number;
+    onSaveMemoryPalaceAutoSummaryThreshold?: (threshold: number) => void;
     onForceVectorize?: () => void;
     // Emotion (embedded under schedule modal, synced on/off with scheduleStyle)
     apiPresets?: ApiPreset[];
@@ -235,7 +244,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
-    isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress, onForceVectorize,
+    isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
+    memoryPalaceAutoSummaryThreshold, onSaveMemoryPalaceAutoSummaryThreshold, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
@@ -248,6 +258,23 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const HISTORY_PAGE_SIZE = 50;
     const HISTORY_SEARCH_MAX = 200;
     const LONG_PRESS_MS = 450;
+    const normalizedAutoSummaryThreshold = normalizeAutoSummaryThreshold(
+        memoryPalaceAutoSummaryThreshold ?? DEFAULT_AUTO_SUMMARY_THRESHOLD,
+    );
+    const [autoSummaryThresholdInput, setAutoSummaryThresholdInput] = useState(String(normalizedAutoSummaryThreshold));
+    const [autoSummarySaved, setAutoSummarySaved] = useState(false);
+
+    useEffect(() => {
+        setAutoSummaryThresholdInput(String(normalizedAutoSummaryThreshold));
+    }, [normalizedAutoSummaryThreshold]);
+
+    const handleSaveAutoSummaryThreshold = () => {
+        const threshold = normalizeAutoSummaryThreshold(autoSummaryThresholdInput);
+        setAutoSummaryThresholdInput(String(threshold));
+        onSaveMemoryPalaceAutoSummaryThreshold?.(threshold);
+        setAutoSummarySaved(true);
+        window.setTimeout(() => setAutoSummarySaved(false), 1800);
+    };
 
     const startHistoryLongPress = (msgId: number) => {
         longPressTriggeredRef.current = false;
@@ -511,6 +538,34 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                      {/* 记忆宫殿：一键向量化所有聊天记录 */}
                      {isMemoryPalaceEnabled && onForceVectorize && (
                          <div className="pt-2 border-t border-slate-100">
+                             <div className="mb-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
+                                 <div className="flex items-center justify-between gap-2 mb-2">
+                                     <label className="text-xs font-bold text-emerald-700 uppercase">自动总结触发条数</label>
+                                     <span className="text-[10px] text-emerald-700/70">默认 {DEFAULT_AUTO_SUMMARY_THRESHOLD}</span>
+                                 </div>
+                                 <div className="flex gap-2">
+                                     <input
+                                         type="number"
+                                         min={MIN_AUTO_SUMMARY_THRESHOLD}
+                                         max={MAX_AUTO_SUMMARY_THRESHOLD}
+                                         step={10}
+                                         value={autoSummaryThresholdInput}
+                                         onChange={e => setAutoSummaryThresholdInput(e.target.value)}
+                                         className="min-w-0 flex-1 rounded-xl border border-emerald-100 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:border-emerald-300"
+                                     />
+                                     <button
+                                         type="button"
+                                         onClick={handleSaveAutoSummaryThreshold}
+                                         disabled={!onSaveMemoryPalaceAutoSummaryThreshold}
+                                         className="shrink-0 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
+                                     >
+                                         {autoSummarySaved ? '已保存' : '保存'}
+                                     </button>
+                                 </div>
+                                 <p className="text-[10px] text-emerald-800/70 mt-2 leading-relaxed">
+                                     范围 {MIN_AUTO_SUMMARY_THRESHOLD}-{MAX_AUTO_SUMMARY_THRESHOLD}。数字小：更新更快，但副 API 调用更频繁，短碎片更容易拆散和重复。数字大：更省调用，长段更完整，但新内容进记忆更慢，没触发前清空聊天风险更高。
+                                 </p>
+                             </div>
                              <button
                                  onClick={onForceVectorize}
                                  disabled={isVectorizing}

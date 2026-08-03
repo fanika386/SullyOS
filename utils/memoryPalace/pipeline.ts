@@ -8,7 +8,7 @@
  * 缓冲区机制（替代旧的 TopicLoom + 封盒方案）：
  * - 热区：最近 200 条消息留在聊天上下文
  * - 缓冲区：热区之前、高水位之后的消息
- * - 缓冲区 >= 50 条时触发：LLM 提取记忆 → Embedding → 更新高水位
+ * - 缓冲区达到自动总结触发条数时触发：LLM 提取记忆 → Embedding → 更新高水位
  * - 保留缓冲区尾部 15% 作为下次提取的上下文衔接
  *
  * LLM 调用策略：
@@ -20,6 +20,14 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
 import { countUnprocessedBufferMessages } from './bufferCount';
+
+const MEMORY_PALACE_CONFIG_KEY = 'os_memory_palace_config';
+
+/** 自动总结触发条数：缓冲区累积超过 N 条消息后触发处理 */
+export const DEFAULT_AUTO_SUMMARY_THRESHOLD = 100;
+export const MIN_AUTO_SUMMARY_THRESHOLD = 20;
+export const MAX_AUTO_SUMMARY_THRESHOLD = 500;
+const FORCE_BUFFER_THRESHOLD = 10;
 
 /** 从 localStorage 读取远程向量配置（避免在每个调用点都传参） */
 function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
@@ -41,7 +49,7 @@ interface StoredRerankConfig {
 }
 function getRerankConfig(): { baseUrl: string; apiKey: string; model: string; topN: number } | undefined {
     try {
-        const raw = localStorage.getItem('os_memory_palace_config');
+        const raw = localStorage.getItem(MEMORY_PALACE_CONFIG_KEY);
         if (!raw) return undefined;
         const parsed = JSON.parse(raw);
         const r: StoredRerankConfig | undefined = parsed?.rerank;
@@ -53,6 +61,27 @@ function getRerankConfig(): { baseUrl: string; apiKey: string; model: string; to
             topN: Math.max(1, Math.min(20, r.topN ?? 5)),
         };
     } catch { return undefined; }
+}
+
+export function normalizeAutoSummaryThreshold(value: unknown): number {
+    const raw = typeof value === 'number'
+        ? value
+        : (typeof value === 'string' && value.trim()) ? Number(value) : NaN;
+    if (!Number.isFinite(raw)) return DEFAULT_AUTO_SUMMARY_THRESHOLD;
+    const rounded = Math.round(raw);
+    return Math.max(MIN_AUTO_SUMMARY_THRESHOLD, Math.min(MAX_AUTO_SUMMARY_THRESHOLD, rounded));
+}
+
+export function getMemoryPalaceAutoSummaryThreshold(): number {
+    try {
+        if (typeof localStorage === 'undefined') return DEFAULT_AUTO_SUMMARY_THRESHOLD;
+        const raw = localStorage.getItem(MEMORY_PALACE_CONFIG_KEY);
+        if (!raw) return DEFAULT_AUTO_SUMMARY_THRESHOLD;
+        const config = JSON.parse(raw);
+        return normalizeAutoSummaryThreshold(config?.autoSummaryThreshold);
+    } catch {
+        return DEFAULT_AUTO_SUMMARY_THRESHOLD;
+    }
 }
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
@@ -922,7 +951,7 @@ export async function retrieveMemories(
  */
 function getEmbeddingConfig(charEmbeddingConfig?: any): EmbeddingConfig | null {
     try {
-        const raw = localStorage.getItem('os_memory_palace_config');
+        const raw = localStorage.getItem(MEMORY_PALACE_CONFIG_KEY);
         if (raw) {
             const global = JSON.parse(raw);
             if (global.embedding?.baseUrl && global.embedding?.apiKey) {
@@ -1141,8 +1170,6 @@ export function getMemoryPalaceHighWaterMark(charId: string): number {
 
 /** 热区大小：最近 N 条消息始终留在聊天上下文，不处理 */
 const HOT_ZONE_SIZE = 200;
-/** 缓冲区阈值：累积超过 N 条消息后触发处理 */
-const BUFFER_THRESHOLD = 100;
 /** 处理比例：取缓冲区前 85%，保留尾部 15% 作为下次总结的上下文 */
 const PROCESS_RATIO = 0.85;
 
@@ -1570,7 +1597,7 @@ export async function processNewMessages(
         const lastProcessedId = getLastProcessedId(charId);
         const buffer = textMessages.filter(m => m.id > lastProcessedId && m.id < hotZoneStartId);
 
-        const minThreshold = force ? 10 : BUFFER_THRESHOLD;
+        const minThreshold = force ? FORCE_BUFFER_THRESHOLD : getMemoryPalaceAutoSummaryThreshold();
         if (buffer.length < minThreshold) {
             console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${minThreshold}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
             return makeSkipResult('threshold');

@@ -62,7 +62,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, resolveUserProfileForCharacter, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, resolveUserProfileForCharacter, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -2849,6 +2849,11 @@ const Chat: React.FC = () => {
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}
                 vectorizeProgress={vectorizeProgress}
+                memoryPalaceAutoSummaryThreshold={memoryPalaceConfig.autoSummaryThreshold}
+                onSaveMemoryPalaceAutoSummaryThreshold={(threshold) => {
+                    updateMemoryPalaceConfig({ autoSummaryThreshold: threshold });
+                    addToast('记忆宫殿自动总结触发条数已保存', 'success');
+                }}
                 onForceVectorize={handleForceVectorize}
                 apiPresets={apiPresets}
                 onAddApiPreset={addApiPreset}

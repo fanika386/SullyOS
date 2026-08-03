@@ -14,6 +14,8 @@ import {
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
     scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, mergeMemoryNodesWithAi, applyExactDuplicateMemoryDeletion,
     resolveCharacterDedupScanScope,
+    DEFAULT_AUTO_SUMMARY_THRESHOLD, MIN_AUTO_SUMMARY_THRESHOLD, MAX_AUTO_SUMMARY_THRESHOLD,
+    normalizeAutoSummaryThreshold,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
@@ -640,6 +642,10 @@ export default function MemoryPalaceApp() {
     const [rrSaved, setRrSaved] = useState(false);
     const [rrTesting, setRrTesting] = useState(false);
     const [rrTestResult, setRrTestResult] = useState<string | null>(null);
+    const [autoSummaryThresholdInput, setAutoSummaryThresholdInput] = useState(() =>
+        String(normalizeAutoSummaryThreshold(memoryPalaceConfig.autoSummaryThreshold)),
+    );
+    const [autoSummarySaved, setAutoSummarySaved] = useState(false);
 
     // 远程向量存储配置
     const [rvUrl, setRvUrl] = useState(remoteVectorConfig.supabaseUrl);
@@ -663,6 +669,7 @@ export default function MemoryPalaceApp() {
         setRrKey(memoryPalaceConfig.rerank?.apiKey || '');
         setRrModel(memoryPalaceConfig.rerank?.model || 'BAAI/bge-reranker-v2-m3');
         setRrTopN(memoryPalaceConfig.rerank?.topN || 5);
+        setAutoSummaryThresholdInput(String(normalizeAutoSummaryThreshold(memoryPalaceConfig.autoSummaryThreshold)));
     }, [memoryPalaceConfig]);
 
     // 远程向量配置变更时同步到本地状态
@@ -1092,6 +1099,14 @@ export default function MemoryPalaceApp() {
         });
         setRrSaved(true);
         setTimeout(() => setRrSaved(false), 2000);
+    };
+
+    const handleSaveAutoSummaryThreshold = () => {
+        const threshold = normalizeAutoSummaryThreshold(autoSummaryThresholdInput);
+        setAutoSummaryThresholdInput(String(threshold));
+        updateMemoryPalaceConfig({ autoSummaryThreshold: threshold });
+        setAutoSummarySaved(true);
+        setTimeout(() => setAutoSummarySaved(false), 2000);
     };
 
     const handleSaveLightApi = () => {
@@ -2911,6 +2926,45 @@ export default function MemoryPalaceApp() {
                     <span style={{ fontSize: 11, color: '#b91c1c' }}>
                         注：「导入旧记忆」是一次性大批量操作，调用次数会明显多于日常，单独见那里的提示。
                     </span>
+                </div>
+
+                <div style={{
+                    background: '#f8fafc', borderRadius: 16, padding: 16,
+                    border: '1px solid #e2e8f0', marginBottom: 16,
+                }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="settings" size={14} />
+                        <span>自动总结触发条数</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.7, marginBottom: 12 }}>
+                        聊天缓冲区达到这个条数后，记忆宫殿才会自动交给副 API 提取记忆。默认 {DEFAULT_AUTO_SUMMARY_THRESHOLD}，范围 {MIN_AUTO_SUMMARY_THRESHOLD}-{MAX_AUTO_SUMMARY_THRESHOLD}。
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                            type="number"
+                            min={MIN_AUTO_SUMMARY_THRESHOLD}
+                            max={MAX_AUTO_SUMMARY_THRESHOLD}
+                            step={10}
+                            value={autoSummaryThresholdInput}
+                            onChange={e => setAutoSummaryThresholdInput(e.target.value)}
+                            className={inputClass}
+                            style={{ flex: 1 }}
+                        />
+                        <button
+                            onClick={handleSaveAutoSummaryThreshold}
+                            style={{
+                                padding: '10px 14px', borderRadius: 12, border: 'none',
+                                fontWeight: 700, fontSize: 12, color: 'white',
+                                background: '#334155', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {autoSummarySaved ? '✓ 已保存' : '保存'}
+                        </button>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.7, marginTop: 10 }}>
+                        数字小：更新更快，但副 API 调用更频繁，短碎片更容易被拆散，也更容易出现重复感。<br/>
+                        数字大：更省调用，长段上下文更完整，但新聊天进记忆更慢，没触发前清空聊天风险更高。
+                    </div>
                 </div>
 
                 {/* 副 API 配置 */}
