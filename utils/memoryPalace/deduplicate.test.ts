@@ -3,6 +3,7 @@ import { EventBoxDB, MemoryLinkDB, MemoryNodeDB, MemoryVectorDB } from './db';
 import {
     applyExactDuplicateMemoryDeletion,
     buildAiDuplicatePreviewFromSuggestions,
+    buildAiMergedMemoryDraftFromResponse,
     findExactDuplicateMemoryGroups,
     scanSemanticDuplicateMemories,
 } from './deduplicate';
@@ -312,5 +313,39 @@ describe('记忆宫殿全局精确去重', () => {
 
         expect(preview.groups).toEqual([]);
         expect(preview.duplicateCount).toBe(0);
+    });
+
+    it('把 AI 合并整理结果规范成一条保留细节的新记忆草稿', () => {
+        const nodes = [
+            makeNode('dedup_merge_a', 'dedup_merge_char', {
+                content: 'TA 喜欢雨天去海边。',
+                room: 'living_room',
+                tags: ['海边'],
+                importance: 4,
+            }),
+            makeNode('dedup_merge_b', 'dedup_merge_char', {
+                content: 'TA 喜欢雨天去海边，还想带一把透明伞。',
+                room: 'bedroom',
+                tags: ['雨天'],
+                importance: 8,
+            }),
+        ];
+
+        const draft = buildAiMergedMemoryDraftFromResponse(nodes, {
+            content: 'TA 喜欢雨天去海边，还想带一把透明伞。',
+            room: 'unknown_room',
+            tags: ['海边', '透明伞', '海边'],
+            importance: 12,
+            mood: '',
+            reason: '去掉重复表达，保留透明伞细节。',
+        });
+
+        expect(draft.content).toBe('TA 喜欢雨天去海边，还想带一把透明伞。');
+        expect(draft.room).toBe('bedroom');
+        expect(draft.tags).toEqual(['海边', '透明伞', '雨天']);
+        expect(draft.importance).toBe(10);
+        expect(draft.mood).toBe('peaceful');
+        expect(draft.sourceIds).toEqual(['dedup_merge_a', 'dedup_merge_b']);
+        expect(draft.reason).toBe('去掉重复表达，保留透明伞细节。');
     });
 });

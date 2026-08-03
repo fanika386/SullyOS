@@ -85,9 +85,11 @@ export type { WipeResult } from './wipe';
 export {
     findExactDuplicateMemoryGroups,
     buildAiDuplicatePreviewFromSuggestions,
+    buildAiMergedMemoryDraftFromResponse,
     scanExactDuplicateMemories,
     scanSemanticDuplicateMemories,
     scanAiSemanticDuplicateMemories,
+    mergeMemoryNodesWithAi,
     applyExactDuplicateMemoryDeletion,
     deduplicateExactMemories,
 } from './deduplicate';
@@ -98,6 +100,7 @@ export type {
     SemanticDuplicateScanOptions,
     AiDuplicateLLMConfig,
     AiSemanticDuplicateScanOptions,
+    AiMergedMemoryDraft,
 } from './deduplicate';
 
 // 导出 / 导入（接入外置记忆库、跨设备迁移用）

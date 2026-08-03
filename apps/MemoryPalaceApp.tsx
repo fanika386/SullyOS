@@ -12,9 +12,9 @@ import {
     DigestReportDB, PLATE_TITLES,
     bootstrapPlatesFromHistory, markPlateBootstrapDone,
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
-    scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, applyExactDuplicateMemoryDeletion,
+    scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, mergeMemoryNodesWithAi, applyExactDuplicateMemoryDeletion,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
 import type { Message } from '../types';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -551,6 +551,12 @@ export default function MemoryPalaceApp() {
     const [dedupAiApiSource, setDedupAiApiSource] = useState<string>(DEDUP_AI_SOURCE_MEMORY);
     const [dedupReviewPreview, setDedupReviewPreview] = useState<ExactDuplicateMemoryPreview | null>(null);
     const [dedupSelectedDeleteIds, setDedupSelectedDeleteIds] = useState<Set<string>>(new Set());
+    const [dedupMergingGroupKey, setDedupMergingGroupKey] = useState<string | null>(null);
+    const [dedupMergeDraft, setDedupMergeDraft] = useState<{
+        groupKey: string;
+        sourceNodes: MemoryNode[];
+        draft: AiMergedMemoryDraft;
+    } | null>(null);
 
     useEffect(() => {
         if (dedupTargetCharId !== DEDUP_ALL_CHARS && !characters.some(c => c.id === dedupTargetCharId)) {
@@ -561,6 +567,8 @@ export default function MemoryPalaceApp() {
     useEffect(() => {
         setDedupReviewPreview(null);
         setDedupSelectedDeleteIds(new Set());
+        setDedupMergingGroupKey(null);
+        setDedupMergeDraft(null);
         setDedupResult(null);
     }, [dedupMode, dedupTargetCharId, dedupAiApiSource]);
 
@@ -1681,6 +1689,114 @@ export default function MemoryPalaceApp() {
             groups,
             duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
         };
+    };
+
+    const buildDedupGroupKey = (group: ExactDuplicateMemoryPreview['groups'][number], groupIndex: number): string =>
+        `${group.keep.id}-${groupIndex}`;
+
+    const handleMergeAiDedupGroup = async (
+        group: ExactDuplicateMemoryPreview['groups'][number],
+        groupIndex: number,
+        selectedNodes: MemoryNode[],
+    ) => {
+        if (deduping || dedupMergingGroupKey) return;
+        if (selectedNodes.length === 0) {
+            setDedupResult('[warn]先勾选要一起整理的候选记忆');
+            return;
+        }
+        const aiConfig = resolveDedupAiConfig();
+        if (!aiConfig) {
+            setDedupResult('[err]合并整理需要先选择一套已完整配置的 API');
+            return;
+        }
+
+        const sourceNodes = [group.keep, ...selectedNodes];
+        const groupKey = buildDedupGroupKey(group, groupIndex);
+        const owner = characters.find(c => c.id === group.charId)?.name || group.charId;
+        setDedupMergingGroupKey(groupKey);
+        setDedupMergeDraft(null);
+        setDedupResult(`正在用 ${aiConfig.label} 整理 ${owner} 的 ${sourceNodes.length} 条记忆…（会产生 API 用量）`);
+        try {
+            const draft = await mergeMemoryNodesWithAi(sourceNodes, aiConfig.config, { charName: owner });
+            setDedupMergeDraft({ groupKey, sourceNodes, draft });
+            setDedupResult('[ok]已生成合并草稿：请在候选组里预览，确认后再保存');
+        } catch (e: any) {
+            setDedupResult(`[err]合并整理失败：${e?.message || e}`);
+        } finally {
+            setDedupMergingGroupKey(null);
+        }
+    };
+
+    const handleSaveDedupMergedMemory = async (deleteSources: boolean) => {
+        if (!dedupMergeDraft || deduping) return;
+        const { sourceNodes, draft } = dedupMergeDraft;
+        const content = draft.content.trim();
+        if (!content) {
+            setDedupResult('[warn]合并后的新记忆正文不能为空');
+            return;
+        }
+
+        if (deleteSources) {
+            const confirmed = confirm(
+                `保存这条合并后的新记忆，并删除原来的 ${sourceNodes.length} 条旧记忆吗？\n\n` +
+                `建议先确认新记忆已经保留了所有细节。删除会同步清理旧记忆的本地向量、关联和事件盒引用。`
+            );
+            if (!confirmed) return;
+        }
+
+        const now = Date.now();
+        const newNode: MemoryNode = {
+            id: `mp_merge_${now}_${Math.random().toString(36).slice(2, 8)}`,
+            charId: sourceNodes[0].charId,
+            content,
+            room: draft.room,
+            tags: draft.tags,
+            importance: draft.importance,
+            mood: draft.mood,
+            embedded: false,
+            createdAt: now,
+            lastAccessedAt: now,
+            accessCount: 0,
+            origin: 'system',
+            sourceId: sourceNodes[0].id,
+        };
+
+        setDeduping(true);
+        try {
+            await MemoryNodeDB.save(newNode);
+
+            if (deleteSources) {
+                const deletionPreview: ExactDuplicateMemoryPreview = {
+                    scannedCount: sourceNodes.length + 1,
+                    charCount: 1,
+                    groups: [{
+                        charId: newNode.charId,
+                        content: newNode.content,
+                        keep: newNode,
+                        duplicates: sourceNodes,
+                        nodes: [newNode, ...sourceNodes],
+                    }],
+                    duplicateCount: sourceNodes.length,
+                };
+                const result = await applyExactDuplicateMemoryDeletion(deletionPreview, {
+                    remoteConfig: remoteVectorConfig,
+                    onProgress: (deleted, total) => setDedupResult(`正在删除旧记忆 ${deleted}/${total}…`),
+                });
+                const failPart = result.failed.length > 0 ? `，${result.failed.length} 条旧记忆删除失败` : '';
+                setDedupResult(`${result.failed.length > 0 ? '[warn]' : '[ok]'}已保存合并新记忆，并删除 ${result.deleted}/${sourceNodes.length} 条旧记忆${failPart}`);
+                setDedupReviewPreview(null);
+                setDedupSelectedDeleteIds(new Set());
+            } else {
+                setDedupResult('[ok]已保存合并后的新记忆；原记忆都已保留');
+            }
+
+            setDedupMergeDraft(null);
+            await loadStats();
+        } catch (e: any) {
+            setDedupResult(`[err]保存合并记忆失败：${e?.message || e}`);
+        } finally {
+            setDeduping(false);
+        }
     };
 
     /** 完整去重：先按用户选定范围扫描并询问，确认后删除重复节点。 */
@@ -4431,13 +4547,32 @@ create table if not exists memory_vectors (
                                     const confidence = typeof group.confidence === 'number'
                                         ? ` · 置信度 ${(group.confidence * 100).toFixed(0)}%`
                                         : '';
+                                    const groupKey = buildDedupGroupKey(group, groupIndex);
+                                    const selectedForMerge = group.duplicates.filter(node => dedupSelectedDeleteIds.has(node.id));
+                                    const mergeDraftForGroup = dedupMergeDraft?.groupKey === groupKey ? dedupMergeDraft : null;
                                     return (
                                         <div key={`${group.keep.id}-${groupIndex}`} style={{
                                             border: '1px solid #e2e8f0', borderRadius: 10,
                                             padding: 10, background: '#f8fafc',
                                         }}>
-                                            <div style={{ fontSize: 11, fontWeight: 800, color: '#334155', marginBottom: 8 }}>
-                                                {owner} · 候选组 {groupIndex + 1}{confidence}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                                                <div style={{ fontSize: 11, fontWeight: 800, color: '#334155' }}>
+                                                    {owner} · 候选组 {groupIndex + 1}{confidence}
+                                                </div>
+                                                <button
+                                                    onClick={() => handleMergeAiDedupGroup(group, groupIndex, selectedForMerge)}
+                                                    disabled={deduping || !!dedupMergingGroupKey || selectedForMerge.length === 0}
+                                                    style={{
+                                                        padding: '5px 8px', borderRadius: 8, border: '1px solid #fbbf24',
+                                                        background: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? '#f1f5f9' : '#fffbeb',
+                                                        color: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? '#94a3b8' : '#92400e',
+                                                        fontSize: 10, fontWeight: 800,
+                                                        cursor: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? 'not-allowed' : 'pointer',
+                                                        whiteSpace: 'nowrap',
+                                                    }}
+                                                >
+                                                    {dedupMergingGroupKey === groupKey ? '整理中…' : `整理已选 ${selectedForMerge.length} 条`}
+                                                </button>
                                             </div>
                                             <div style={{
                                                 padding: 8, borderRadius: 8, background: '#ecfdf5',
@@ -4484,6 +4619,59 @@ create table if not exists memory_vectors (
                                             {group.aiReason && (
                                                 <div style={{ marginTop: 8, fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
                                                     AI 理由：{group.aiReason}
+                                                </div>
+                                            )}
+                                            {mergeDraftForGroup && (
+                                                <div style={{
+                                                    marginTop: 10, padding: 10, borderRadius: 10,
+                                                    background: '#fefce8', border: '1px solid #fde68a',
+                                                }}>
+                                                    <div style={{ fontSize: 11, fontWeight: 800, color: '#92400e', marginBottom: 6 }}>
+                                                        合并后的新记忆
+                                                    </div>
+                                                    <textarea
+                                                        value={mergeDraftForGroup.draft.content}
+                                                        onChange={e => setDedupMergeDraft(prev => prev && prev.groupKey === groupKey
+                                                            ? { ...prev, draft: { ...prev.draft, content: e.target.value } }
+                                                            : prev
+                                                        )}
+                                                        style={{
+                                                            width: '100%', minHeight: 86, resize: 'vertical',
+                                                            borderRadius: 8, border: '1px solid #fde68a',
+                                                            padding: 8, fontSize: 11, color: '#78350f',
+                                                            background: 'white', lineHeight: 1.6,
+                                                        }}
+                                                    />
+                                                    <div style={{ fontSize: 10, color: '#92400e', lineHeight: 1.6, marginTop: 6 }}>
+                                                        房间：{ROOM_LABELS[mergeDraftForGroup.draft.room]} · 重要度：{mergeDraftForGroup.draft.importance}
+                                                        {mergeDraftForGroup.draft.tags.length > 0 ? ` · 标签：${mergeDraftForGroup.draft.tags.join('、')}` : ''}
+                                                        {mergeDraftForGroup.draft.reason ? ` · ${mergeDraftForGroup.draft.reason}` : ''}
+                                                    </div>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                                                        <button
+                                                            onClick={() => handleSaveDedupMergedMemory(false)}
+                                                            disabled={deduping}
+                                                            style={{
+                                                                padding: '8px 0', borderRadius: 10, border: '1px solid #fbbf24',
+                                                                background: 'white', color: '#92400e', fontSize: 11, fontWeight: 800,
+                                                                cursor: deduping ? 'not-allowed' : 'pointer',
+                                                            }}
+                                                        >
+                                                            只保存新记忆
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleSaveDedupMergedMemory(true)}
+                                                            disabled={deduping}
+                                                            style={{
+                                                                padding: '8px 0', borderRadius: 10, border: 'none',
+                                                                background: deduping ? '#cbd5e1' : '#dc2626',
+                                                                color: 'white', fontSize: 11, fontWeight: 800,
+                                                                cursor: deduping ? 'not-allowed' : 'pointer',
+                                                            }}
+                                                        >
+                                                            保存并删除旧记忆
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>

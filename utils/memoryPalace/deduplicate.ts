@@ -2,7 +2,8 @@ import { ensureFloat32, MemoryLinkDB, MemoryNodeDB, MemoryVectorDB } from './db'
 import { cosineSimilarity } from './embedding';
 import { removeMemoryFromBox } from './eventBox';
 import { deleteVector } from './supabaseVector';
-import type { MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
+import { ROOM_LABELS } from './types';
+import type { MemoryNode, MemoryRoom, MemoryVector, RemoteVectorConfig } from './types';
 import { extractJson, safeFetchJson } from '../safeApi';
 
 export interface ExactDuplicateMemoryGroup {
@@ -56,6 +57,16 @@ export interface AiSemanticDuplicateScanOptions extends ExactDuplicateScanOption
     onProgress?: (completed: number, total: number, charId: string) => void;
 }
 
+export interface AiMergedMemoryDraft {
+    content: string;
+    room: MemoryRoom;
+    tags: string[];
+    importance: number;
+    mood: string;
+    reason?: string;
+    sourceIds: string[];
+}
+
 export interface ExactDuplicateDeletionOptions {
     remoteConfig?: RemoteVectorConfig;
     onProgress?: (deleted: number, total: number) => void;
@@ -94,6 +105,7 @@ interface AiAcceptedDuplicateCandidate {
 const DEFAULT_AI_DUPLICATE_MIN_CONFIDENCE = 0.92;
 const AI_DETAIL_EXTRA_CHARS = 8;
 const AI_DETAIL_EXTRA_RATIO = 1.15;
+const MEMORY_ROOMS = Object.keys(ROOM_LABELS) as MemoryRoom[];
 
 function duplicateContentKey(content: string): string {
     return (content || '').trim();
@@ -115,6 +127,31 @@ function hasMeaningfullyMoreDetail(candidate: MemoryNode, keep: MemoryNode): boo
 
 function hasComparableContent(node: MemoryNode, minContentLength: number): boolean {
     return duplicateContentKey(node.content).length >= minContentLength;
+}
+
+function clampImportance(value: unknown, fallback: number): number {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(1, Math.min(10, Math.round(n)));
+}
+
+function uniqueTags(tags: unknown[], fallbackTags: string[] = []): string[] {
+    const result: string[] = [];
+    const push = (value: unknown) => {
+        if (typeof value !== 'string') return;
+        const tag = value.trim();
+        if (!tag || result.includes(tag)) return;
+        result.push(tag);
+    };
+    tags.forEach(push);
+    fallbackTags.forEach(push);
+    return result.slice(0, 12);
+}
+
+function resolveMemoryRoom(value: unknown, fallback: MemoryRoom): MemoryRoom {
+    return typeof value === 'string' && MEMORY_ROOMS.includes(value as MemoryRoom)
+        ? value as MemoryRoom
+        : fallback;
 }
 
 function compareCanonicalNode(a: MemoryNode, b: MemoryNode): number {
@@ -504,6 +541,115 @@ export function buildAiDuplicatePreviewFromSuggestions(
 function clipForAi(content: string): string {
     const text = duplicateContentKey(content);
     return text.length > 700 ? `${text.slice(0, 700)}...` : text;
+}
+
+export function buildAiMergedMemoryDraftFromResponse(
+    nodes: MemoryNode[],
+    rawResponse: unknown,
+): AiMergedMemoryDraft {
+    if (nodes.length === 0) throw new Error('合并整理需要至少一条记忆');
+    const parsed = rawResponse && typeof rawResponse === 'object'
+        ? rawResponse as Record<string, unknown>
+        : {};
+    const content = typeof parsed.content === 'string'
+        ? duplicateContentKey(parsed.content)
+        : '';
+    if (!content) throw new Error('AI 没有返回合并后的记忆正文');
+
+    const fallback = nodes.slice().sort(compareCanonicalNode)[0];
+    const maxImportance = Math.max(...nodes.map(node => node.importance || 1));
+    const fallbackTags = nodes.flatMap(node => node.tags || []);
+    const tags = uniqueTags(Array.isArray(parsed.tags) ? parsed.tags : [], fallbackTags);
+    const mood = typeof parsed.mood === 'string' && parsed.mood.trim()
+        ? parsed.mood.trim()
+        : (fallback.mood || 'neutral');
+    const reason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
+
+    return {
+        content,
+        room: resolveMemoryRoom(parsed.room, fallback.room),
+        tags,
+        importance: clampImportance(parsed.importance, maxImportance),
+        mood,
+        reason: reason || undefined,
+        sourceIds: nodes.map(node => node.id),
+    };
+}
+
+export async function mergeMemoryNodesWithAi(
+    nodes: MemoryNode[],
+    llmConfig: AiDuplicateLLMConfig,
+    options: { charName?: string } = {},
+): Promise<AiMergedMemoryDraft> {
+    if (nodes.length < 2) throw new Error('至少选择两条记忆才能合并整理');
+    if (!llmConfig?.baseUrl || !llmConfig.apiKey || !llmConfig.model) {
+        throw new Error('合并整理需要完整的 baseUrl、apiKey 和 model');
+    }
+    const charId = nodes[0].charId;
+    if (!nodes.every(node => node.charId === charId)) {
+        throw new Error('只能合并同一角色的记忆');
+    }
+
+    const payload = nodes.map(node => ({
+        id: node.id,
+        content: clipForAi(node.content),
+        room: node.room,
+        tags: node.tags || [],
+        importance: node.importance,
+        mood: node.mood,
+        createdAt: node.createdAt,
+    }));
+
+    const systemPrompt = `你是记忆宫殿的"合并整理员"。
+用户会给你同一角色的几条相似记忆。你的任务不是判断删除，而是生成一条新的合并记忆：
+- 重复表达只保留一次。
+- 不同细节必须全部保留。
+- 如果某条没有重复，也要把它的信息写进新记忆。
+- 不要编造新事实，不要改变人称和关系。
+- 输出应该是一条自然、完整、可直接存入记忆宫殿的记忆。
+
+返回严格 JSON，不要 Markdown：
+{
+  "content": "合并后的新记忆正文",
+  "room": "living_room|bedroom|study|user_room|self_room|attic|windowsill",
+  "tags": ["标签"],
+  "importance": 1,
+  "mood": "情绪标签",
+  "reason": "简单说明去掉了哪些重复、保留了哪些细节"
+}`;
+
+    const userPrompt = `角色：${options.charName || charId}
+待合并记忆 JSON：
+${JSON.stringify(payload, null, 2)}`;
+
+    const data = await safeFetchJson(
+        `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${llmConfig.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: llmConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                temperature: 0.2,
+                max_tokens: 3000,
+                stream: false,
+            }),
+        },
+        1,
+        180_000,
+        { appName: '记忆宫殿', purpose: 'AI记忆合并整理', characterId: charId },
+    );
+
+    const reply = data.choices?.[0]?.message?.content || '';
+    const parsed = extractJson(reply);
+    if (!parsed) throw new Error(`AI 没有返回可解析的合并 JSON：${reply.slice(0, 160)}`);
+    return buildAiMergedMemoryDraftFromResponse(nodes, parsed);
 }
 
 async function requestAiDuplicateSuggestions(
