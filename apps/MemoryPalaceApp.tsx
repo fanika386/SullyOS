@@ -14,8 +14,9 @@ import {
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
     scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, mergeMemoryNodesWithAi, applyExactDuplicateMemoryDeletion,
     resolveCharacterDedupScanScope,
+    dedupTaskStore, useDedupTask,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft, DedupMode } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
 import type { Message } from '../types';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -25,7 +26,6 @@ const RANGE_PAGE_SIZE = 100;
 const SEMANTIC_DEDUP_THRESHOLD = 0.96;
 const DEDUP_AI_SOURCE_MEMORY = 'memoryPalace';
 const DEDUP_AI_SOURCE_MAIN = 'main';
-type DedupMode = 'exact' | 'semantic' | 'ai';
 
 /** 手动总结面板：把毫秒时间戳格式化成「2026-03-20 14:30」 */
 const fmtRangeTs = (ts: number): string => {
@@ -544,13 +544,9 @@ export default function MemoryPalaceApp() {
     const [wiping, setWiping] = useState(false);
     const [wipeResult, setWipeResult] = useState<string | null>(null);
     // 当前角色维护：按角色内部精确正文 / 近似语义 / AI 语义去重
-    const [deduping, setDeduping] = useState(false);
-    const [dedupResult, setDedupResult] = useState<string | null>(null);
     const [dedupMode, setDedupMode] = useState<DedupMode>('exact');
     const [dedupAiApiSource, setDedupAiApiSource] = useState<string>(DEDUP_AI_SOURCE_MEMORY);
-    const [dedupReviewPreview, setDedupReviewPreview] = useState<ExactDuplicateMemoryPreview | null>(null);
     const [dedupSelectedDeleteIds, setDedupSelectedDeleteIds] = useState<Set<string>>(new Set());
-    const [dedupProgress, setDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
     const [dedupMergingGroupKey, setDedupMergingGroupKey] = useState<string | null>(null);
     const [dedupMergeDraft, setDedupMergeDraft] = useState<{
         groupKey: string;
@@ -558,14 +554,30 @@ export default function MemoryPalaceApp() {
         draft: AiMergedMemoryDraft;
     } | null>(null);
 
+    // 去重任务放在全局 store：退出记忆宫殿 / 切到别的 OS App 后任务照常跑，
+    // 再点回来时进度、候选、结果都能从 store 恢复，不会因为组件卸载而丢。
+    const dedupTask = useDedupTask();
+    const deduping = dedupTask.status === 'running';
+    const dedupResult = dedupTask.result;
+    const dedupReviewPreview = dedupTask.status === 'review' ? dedupTask.preview : null;
+    const dedupProgress = dedupTask.progress;
+
     useEffect(() => {
-        setDedupReviewPreview(null);
-        setDedupSelectedDeleteIds(new Set());
-        setDedupProgress(null);
         setDedupMergingGroupKey(null);
         setDedupMergeDraft(null);
-        setDedupResult(null);
     }, [dedupMode, dedupAiApiSource, char?.id]);
+
+    // 精确 / 近似扫描完成后默认全选（旧版是在扫描完弹 confirm 一次性确认删除）。
+    // 只在该份 preview 出现时自动勾选一次；用户手动改动不会被覆盖。
+    useEffect(() => {
+        if (dedupTask.status === 'review' && dedupTask.mode !== 'ai' && dedupTask.preview) {
+            const ids = new Set<string>();
+            for (const group of dedupTask.preview.groups) {
+                for (const node of group.duplicates) ids.add(node.id);
+            }
+            setDedupSelectedDeleteIds(ids);
+        }
+    }, [dedupTask.status, dedupTask.mode, dedupTask.preview]);
 
     // 导出记忆（接入外置记忆库）
     const [exporting, setExporting] = useState(false);
@@ -1696,12 +1708,12 @@ export default function MemoryPalaceApp() {
     ) => {
         if (deduping || dedupMergingGroupKey) return;
         if (selectedNodes.length === 0) {
-            setDedupResult('[warn]先勾选要一起整理的候选记忆');
+            dedupTaskStore.set({ result: '[warn]先勾选要一起整理的候选记忆' });
             return;
         }
         const aiConfig = resolveDedupAiConfig();
         if (!aiConfig) {
-            setDedupResult('[err]合并整理需要先选择一套已完整配置的 API');
+            dedupTaskStore.set({ result: '[err]合并整理需要先选择一套已完整配置的 API' });
             return;
         }
 
@@ -1710,13 +1722,13 @@ export default function MemoryPalaceApp() {
         const owner = characters.find(c => c.id === group.charId)?.name || group.charId;
         setDedupMergingGroupKey(groupKey);
         setDedupMergeDraft(null);
-        setDedupResult(`正在用 ${aiConfig.label} 整理 ${owner} 的 ${sourceNodes.length} 条记忆…（会产生 API 用量）`);
+        dedupTaskStore.set({ result: `正在用 ${aiConfig.label} 整理 ${owner} 的 ${sourceNodes.length} 条记忆…（会产生 API 用量）` });
         try {
             const draft = await mergeMemoryNodesWithAi(sourceNodes, aiConfig.config, { charName: owner });
             setDedupMergeDraft({ groupKey, sourceNodes, draft });
-            setDedupResult('[ok]已生成合并草稿：请在候选组里预览，确认后再保存');
+            dedupTaskStore.set({ result: '[ok]已生成合并草稿：请在候选组里预览，确认后再保存' });
         } catch (e: any) {
-            setDedupResult(`[err]合并整理失败：${e?.message || e}`);
+            dedupTaskStore.set({ result: `[err]合并整理失败：${e?.message || e}` });
         } finally {
             setDedupMergingGroupKey(null);
         }
@@ -1727,7 +1739,7 @@ export default function MemoryPalaceApp() {
         const { sourceNodes, draft } = dedupMergeDraft;
         const content = draft.content.trim();
         if (!content) {
-            setDedupResult('[warn]合并后的新记忆正文不能为空');
+            dedupTaskStore.set({ result: '[warn]合并后的新记忆正文不能为空' });
             return;
         }
 
@@ -1756,7 +1768,11 @@ export default function MemoryPalaceApp() {
             sourceId: sourceNodes[0].id,
         };
 
-        setDeduping(true);
+        dedupTaskStore.set({
+            status: 'running',
+            progress: null,
+            result: deleteSources ? '正在保存合并后的新记忆并删除旧记忆…' : '正在保存合并后的新记忆…',
+        });
         try {
             await MemoryNodeDB.save(newNode);
 
@@ -1775,46 +1791,66 @@ export default function MemoryPalaceApp() {
                 };
                 const result = await applyExactDuplicateMemoryDeletion(deletionPreview, {
                     remoteConfig: remoteVectorConfig,
-                    onProgress: (deleted, total) => setDedupResult(`正在删除旧记忆 ${deleted}/${total}…`),
+                    onStep: (step) => dedupTaskStore.update(prev =>
+                        prev.progress ? { ...prev, progress: { ...prev.progress, step } } : prev
+                    ),
+                    onProgress: (deleted, total) => {
+                        const ownerName = dedupTaskStore.get().scope.ownerName || '记忆';
+                        dedupTaskStore.set({
+                            progress: { done: deleted, total, label: ownerName, step: `正在删除旧记忆 ${deleted}/${total} 条…` },
+                            result: `正在删除旧记忆 ${deleted}/${total} 条…`,
+                        });
+                    },
                 });
                 const failPart = result.failed.length > 0 ? `，${result.failed.length} 条旧记忆删除失败` : '';
-                setDedupResult(`${result.failed.length > 0 ? '[warn]' : '[ok]'}已保存合并新记忆，并删除 ${result.deleted}/${sourceNodes.length} 条旧记忆${failPart}`);
-                setDedupReviewPreview(null);
+                dedupTaskStore.set({
+                    status: 'done',
+                    preview: null,
+                    progress: null,
+                    result: `${result.failed.length > 0 ? '[warn]' : '[ok]'}已保存合并新记忆，并删除 ${result.deleted}/${sourceNodes.length} 条旧记忆${failPart}`,
+                    finishedAt: Date.now(),
+                });
                 setDedupSelectedDeleteIds(new Set());
             } else {
-                setDedupResult('[ok]已保存合并后的新记忆；原记忆都已保留');
+                dedupTaskStore.set({ status: 'review', result: '[ok]已保存合并后的新记忆；原记忆都已保留' });
             }
 
             setDedupMergeDraft(null);
             await loadStats();
         } catch (e: any) {
-            setDedupResult(`[err]保存合并记忆失败：${e?.message || e}`);
-        } finally {
-            setDeduping(false);
+            dedupTaskStore.set({
+                status: dedupTaskStore.get().preview ? 'review' : 'error',
+                progress: null,
+                result: `[err]保存合并记忆失败：${e?.message || e}`,
+                finishedAt: Date.now(),
+            });
         }
     };
 
     /** 完整去重：先按用户选定范围扫描并询问，确认后删除重复节点。 */
     const handleDeduplicateAllMemories = async () => {
-        if (deduping) return;
+        if (dedupTask.status === 'running') return;
         if (!char) {
-            setDedupResult('[err]需要先选择一个角色');
+            dedupTaskStore.set({ result: '[err]需要先选择一个角色' });
             return;
         }
         const scanScope = resolveCharacterDedupScanScope(char);
         const scanCharIds = scanScope.charIds;
         const scopeLabel = scanScope.scopeLabel;
         const modeLabel = dedupMode === 'ai' ? 'AI 语义去重' : dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';
-        setDeduping(true);
-        setDedupReviewPreview(null);
         setDedupSelectedDeleteIds(new Set());
-        setDedupProgress({ done: 0, total: 1, label: scanScope.ownerName, step: '正在读取记忆节点…' });
-        setDedupResult(`正在扫描${scopeLabel}的记忆节点…`);
+        dedupTaskStore.begin({
+            mode: dedupMode,
+            scope: scanScope,
+            aiApiSource: dedupAiApiSource,
+            result: `正在扫描${scopeLabel}的记忆节点…`,
+        });
+        dedupTaskStore.set({ progress: { done: 0, total: 1, label: scanScope.ownerName, step: '正在读取记忆节点…' } });
         try {
             if (dedupMode === 'ai') {
                 const aiConfig = resolveDedupAiConfig();
                 if (!aiConfig) {
-                    setDedupResult('[err]AI 去重需要先选择一套已完整配置的 API（Base URL / Key / Model 都要有）');
+                    dedupTaskStore.set({ status: 'error', progress: null, result: '[err]AI 去重需要先选择一套已完整配置的 API（Base URL / Key / Model 都要有）', finishedAt: Date.now() });
                     return;
                 }
 
@@ -1824,23 +1860,37 @@ export default function MemoryPalaceApp() {
                     charIds: scanCharIds,
                     llmConfig: aiConfig.config,
                     charNameById,
-                    onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
+                    onStep: (step) => dedupTaskStore.update(prev =>
+                        prev.progress ? { ...prev, progress: { ...prev.progress, step } } : prev
+                    ),
                     onProgress: (completed, total, charId) => {
                         const owner = charNameById[charId] || charId;
-                        setDedupProgress({ done: completed, total, label: owner, step: `AI 正在扫描 ${completed}/${total} 个角色：${owner}…` });
-                        setDedupResult(`AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`);
+                        dedupTaskStore.set({
+                            progress: { done: completed, total, label: owner, step: `AI 正在扫描 ${completed}/${total} 个角色：${owner}…` },
+                            result: `AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`,
+                        });
                     },
                 });
 
                 if (preview.duplicateCount === 0) {
-                    setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，没有发现可合并的语义重复项`);
+                    dedupTaskStore.set({
+                        status: 'done',
+                        progress: null,
+                        result: `[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，没有发现可合并的语义重复项`,
+                        finishedAt: Date.now(),
+                    });
                     addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成`, 'success');
                     return;
                 }
 
-                setDedupReviewPreview(preview);
+                dedupTaskStore.set({
+                    status: 'review',
+                    preview,
+                    progress: null,
+                    result: `[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。AI 候选默认不勾选，请逐条确认后再删除。`,
+                    finishedAt: Date.now(),
+                });
                 setDedupSelectedDeleteIds(new Set());
-                setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。AI 候选默认不勾选，请逐条确认后再删除。`);
                 addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，找到 ${preview.duplicateCount} 条候选`, 'success');
                 return;
             }
@@ -1850,127 +1900,112 @@ export default function MemoryPalaceApp() {
                 ? await scanSemanticDuplicateMemories({
                     charIds: scanCharIds,
                     threshold: SEMANTIC_DEDUP_THRESHOLD,
-                    onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
+                    onStep: (step) => dedupTaskStore.update(prev =>
+                        prev.progress ? { ...prev, progress: { ...prev.progress, step } } : prev
+                    ),
                     onProgress: (completed, total, charId) => {
                         const owner = nameById.get(charId) || charId;
-                        setDedupProgress({ done: completed, total, label: owner, step: `正在比对向量 ${completed}/${total} 个角色：${owner}…` });
+                        dedupTaskStore.set({
+                            progress: { done: completed, total, label: owner, step: `正在比对向量 ${completed}/${total} 个角色：${owner}…` },
+                        });
                     },
                 })
                 : await scanExactDuplicateMemories({
                     charIds: scanCharIds,
-                    onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
+                    onStep: (step) => dedupTaskStore.update(prev =>
+                        prev.progress ? { ...prev, progress: { ...prev.progress, step } } : prev
+                    ),
                 });
 
             if (preview.duplicateCount === 0) {
                 const vectorPart = dedupMode === 'semantic'
                     ? `，其中 ${preview.vectorizedCount || 0} 条有向量参与近似判断`
                     : '';
-                setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆${vectorPart}，没有发现重复项`);
+                dedupTaskStore.set({
+                    status: 'done',
+                    progress: null,
+                    result: `[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆${vectorPart}，没有发现重复项`,
+                    finishedAt: Date.now(),
+                });
                 addToast(`${scanScope.ownerName} 的记忆去重扫描完成，没有发现重复`, 'success');
                 return;
             }
 
-            const sample = preview.groups.slice(0, 5).map((group, idx) => {
-                const owner = nameById.get(group.charId) || group.charId;
-                const text = group.content.length > 48 ? `${group.content.slice(0, 48)}…` : group.content;
-                const score = dedupMode === 'semantic' && group.maxSimilarity
-                    ? `，最高相似度 ${(group.maxSimilarity * 100).toFixed(1)}%`
-                    : '';
-                return `${idx + 1}. ${owner}：${text}（${group.nodes.length} 条，删除 ${group.duplicates.length} 条${score}）`;
-            }).join('\n');
-            const more = preview.groups.length > 5 ? `\n…还有 ${preview.groups.length - 5} 组` : '';
-            const semanticWarning = dedupMode === 'semantic'
-                ? `\n近似语义模式只比较已有向量的记忆，阈值 ${(SEMANTIC_DEDUP_THRESHOLD * 100).toFixed(0)}%。它能抓到改写版重复，但比精确模式更需要你确认示例。\n`
+            // 不再用浏览器 confirm 卡住后台任务：先把候选存进全局 store，
+            // 用户回来（或直接留在页面）在审核面板里确认后删除。
+            const semanticHint = dedupMode === 'semantic'
+                ? `（只比较已有向量的记忆，阈值 ${(SEMANTIC_DEDUP_THRESHOLD * 100).toFixed(0)}%）`
                 : '';
-            const confirmed = confirm(
-                `完整去重扫描完成：\n\n` +
-                `- 范围：${scopeLabel}\n` +
-                `- 模式：${modeLabel}\n` +
-                `- 扫描 ${preview.scannedCount} 条记忆，覆盖 ${preview.charCount} 个角色\n` +
-                (dedupMode === 'semantic' ? `- 参与近似判断的向量记忆：${preview.vectorizedCount || 0} 条\n` : '') +
-                `- 找到 ${preview.groups.length} 组重复，将删除 ${preview.duplicateCount} 条\n\n` +
-                `扫描边界：同一角色内部的所有房间、事件盒、归档记忆；跨角色相同内容不会删除。\n` +
-                `保留规则：每组保留 1 条（优先保留置顶 / 事件盒总结 / 未归档 / 访问更多 / 更重要 / 更早创建）。\n\n` +
-                semanticWarning +
-                `示例：\n${sample}${more}\n\n` +
-                `确定现在删除这些重复记忆吗？`
-            );
-            if (!confirmed) {
-                setDedupResult(`[warn]已取消：${scopeLabel} · ${modeLabel} 发现 ${preview.duplicateCount} 条重复记忆，未删除`);
-                return;
-            }
-
-            const result = await applyExactDuplicateMemoryDeletion(preview, {
-                remoteConfig: remoteVectorConfig,
-                onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
-                onProgress: (deleted, total) => {
-                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName, step: `正在删除重复记忆 ${deleted}/${total} 条…` });
-                    setDedupResult(`正在删除 ${deleted}/${total} 条重复记忆…`);
-                },
+            dedupTaskStore.set({
+                status: 'review',
+                preview,
+                progress: null,
+                result: `[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆，覆盖 ${preview.charCount} 个角色，找到 ${preview.groups.length} 组重复、${preview.duplicateCount} 条建议删除项${semanticHint}。候选已默认全选，确认下面的内容后再删除。`,
+                finishedAt: Date.now(),
             });
-            const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
-            const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
-            setDedupResult(
-                `${result.failed.length > 0 ? '[warn]' : '[ok]'}${scopeLabel} · ${modeLabel}：扫描 ${result.scannedCount} 条，删除 ${result.deleted}/${result.duplicateCount} 条重复记忆${remotePart}${failPart}`
-            );
-            addToast(`${scanScope.ownerName} 的记忆去重完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success');
-            await loadStats();
+            addToast(`${scanScope.ownerName} 的记忆去重扫描完成，找到 ${preview.duplicateCount} 条重复，回来看结果确认`, 'success');
         } catch (e: any) {
-            setDedupResult(`[err]去重失败：${e?.message || e}`);
-        } finally {
-            setDedupProgress(null);
-            setDeduping(false);
+            dedupTaskStore.set({ status: 'error', progress: null, result: `[err]去重失败：${e?.message || e}`, finishedAt: Date.now() });
         }
     };
 
     const handleDeleteSelectedAiDedupMemories = async () => {
-        if (!dedupReviewPreview || deduping) return;
-        if (!char) {
-            setDedupResult('[err]需要先选择一个角色');
-            return;
-        }
-        const selectedPreview = buildSelectedDedupPreview(dedupReviewPreview, dedupSelectedDeleteIds);
+        const task = dedupTaskStore.get();
+        if (task.status !== 'review' || !task.preview) return;
+        const selectedPreview = buildSelectedDedupPreview(task.preview, dedupSelectedDeleteIds);
         if (selectedPreview.duplicateCount === 0) {
-            setDedupResult('[warn]还没有勾选要删除的 AI 候选记忆');
+            dedupTaskStore.set({ result: '[warn]还没有勾选要删除的重复记忆' });
             return;
         }
 
-        const scanScope = resolveCharacterDedupScanScope(char);
-        const scopeLabel = scanScope.scopeLabel;
-        const confirmed = confirm(
-            `删除已勾选的 ${selectedPreview.duplicateCount} 条 AI 候选重复记忆吗？\n\n` +
-            `范围：${scopeLabel}\n` +
-            `这些记忆会从本地节点、向量、关联和事件盒引用里同步清理。未勾选的候选不会删除。`
-        );
-        if (!confirmed) {
-            setDedupResult(`[warn]已取消：AI 候选里有 ${selectedPreview.duplicateCount} 条已勾选，未删除`);
-            return;
+        const scopeLabel = task.scope.scopeLabel;
+        const ownerName = task.scope.ownerName;
+        // AI 模式保留原来的二次确认；精确 / 近似模式的删除按钮本身就是确认动作。
+        if (task.mode === 'ai') {
+            const confirmed = confirm(
+                `删除已勾选的 ${selectedPreview.duplicateCount} 条 AI 候选重复记忆吗？\n\n` +
+                `范围：${scopeLabel}\n` +
+                `这些记忆会从本地节点、向量、关联和事件盒引用里同步清理。未勾选的候选不会删除。`
+            );
+            if (!confirmed) {
+                dedupTaskStore.set({ result: `[warn]已取消：AI 候选里有 ${selectedPreview.duplicateCount} 条已勾选，未删除` });
+                return;
+            }
         }
 
-        setDeduping(true);
+        dedupTaskStore.set({
+            status: 'running',
+            progress: { done: 0, total: selectedPreview.duplicateCount, label: ownerName, step: '正在准备删除清单…' },
+            result: `正在删除 ${selectedPreview.duplicateCount} 条重复记忆…`,
+        });
         try {
             const result = await applyExactDuplicateMemoryDeletion(selectedPreview, {
                 remoteConfig: remoteVectorConfig,
-                onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
+                onStep: (step) => dedupTaskStore.update(prev =>
+                    prev.progress ? { ...prev, progress: { ...prev.progress, step } } : prev
+                ),
                 onProgress: (deleted, total) => {
-                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName, step: `正在删除 ${deleted}/${total} 条已勾选记忆…` });
-                    setDedupResult(`正在删除 ${deleted}/${total} 条已勾选记忆…`);
+                    dedupTaskStore.set({
+                        progress: { done: deleted, total, label: ownerName, step: `正在删除重复记忆 ${deleted}/${total} 条…` },
+                        result: `正在删除 ${deleted}/${total} 条重复记忆…`,
+                    });
                 },
             });
             const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
             const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
-            setDedupResult(
-                `${result.failed.length > 0 ? '[warn]' : '[ok]'}AI 语义去重：删除 ${result.deleted}/${result.duplicateCount} 条已勾选重复记忆${remotePart}${failPart}`
-            );
-            addToast(`${scanScope.ownerName} 的 AI 候选删除完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success');
-            setDedupReviewPreview(null);
+            const modeLabel = task.mode === 'ai' ? 'AI 语义去重' : task.mode === 'semantic' ? '近似语义去重' : '精确正文去重';
+            dedupTaskStore.set({
+                status: 'done',
+                preview: null,
+                progress: null,
+                result: `${result.failed.length > 0 ? '[warn]' : '[ok]'}${modeLabel}：删除 ${result.deleted}/${result.duplicateCount} 条已确认重复记忆${remotePart}${failPart}`,
+                finishedAt: Date.now(),
+            });
+            addToast(`${ownerName} 的记忆去重完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success');
             setDedupSelectedDeleteIds(new Set());
             await loadStats();
         } catch (e: any) {
-            setDedupResult(`[err]删除失败：${e?.message || e}`);
-        } finally {
-            setDedupProgress(null);
-            setDeduping(false);
+            dedupTaskStore.set({ status: 'error', progress: null, result: `[err]删除失败：${e?.message || e}`, finishedAt: Date.now() });
         }
     };
 
@@ -4537,6 +4572,21 @@ create table if not exists memory_vectors (
                         </div>
                     )}
 
+                    {dedupResult && (dedupTask.status === 'done' || dedupTask.status === 'error' || dedupTask.status === 'interrupted') && (
+                        <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => dedupTaskStore.reset()}
+                                style={{
+                                    padding: '5px 10px', borderRadius: 8, border: '1px solid #cbd5e1',
+                                    background: 'white', color: '#64748b', fontSize: 10, fontWeight: 700,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                清除本次结果
+                            </button>
+                        </div>
+                    )}
+
                     {dedupProgress && (
                         <div style={{
                             marginBottom: 10, padding: 10, borderRadius: 12,
@@ -4584,9 +4634,11 @@ create table if not exists memory_vectors (
                                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
                             }}>
                                 <div>
-                                    <div style={{ fontSize: 12, fontWeight: 800, color: '#334155' }}>AI 候选审核</div>
+                                    <div style={{ fontSize: 12, fontWeight: 800, color: '#334155' }}>
+                                        {dedupTask.mode === 'ai' ? 'AI 候选审核' : '重复候选审核'}
+                                    </div>
                                     <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
-                                        默认不勾选 · 已选择 {dedupSelectedDeleteIds.size}/{dedupReviewPreview.duplicateCount} 条
+                                        {dedupTask.mode === 'ai' ? '默认不勾选' : '扫描后默认全选'} · 已选择 {dedupSelectedDeleteIds.size}/{dedupReviewPreview.duplicateCount} 条
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -4633,20 +4685,22 @@ create table if not exists memory_vectors (
                                                 <div style={{ fontSize: 11, fontWeight: 800, color: '#334155' }}>
                                                     {owner} · 候选组 {groupIndex + 1}{confidence}
                                                 </div>
-                                                <button
-                                                    onClick={() => handleMergeAiDedupGroup(group, groupIndex, selectedForMerge)}
-                                                    disabled={deduping || !!dedupMergingGroupKey || selectedForMerge.length === 0}
-                                                    style={{
-                                                        padding: '5px 8px', borderRadius: 8, border: '1px solid #fbbf24',
-                                                        background: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? '#f1f5f9' : '#fffbeb',
-                                                        color: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? '#94a3b8' : '#92400e',
-                                                        fontSize: 10, fontWeight: 800,
-                                                        cursor: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? 'not-allowed' : 'pointer',
-                                                        whiteSpace: 'nowrap',
-                                                    }}
-                                                >
-                                                    {dedupMergingGroupKey === groupKey ? '整理中…' : `整理已选 ${selectedForMerge.length} 条`}
-                                                </button>
+                                                {dedupTask.mode === 'ai' && (
+                                                    <button
+                                                        onClick={() => handleMergeAiDedupGroup(group, groupIndex, selectedForMerge)}
+                                                        disabled={deduping || !!dedupMergingGroupKey || selectedForMerge.length === 0}
+                                                        style={{
+                                                            padding: '5px 8px', borderRadius: 8, border: '1px solid #fbbf24',
+                                                            background: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? '#f1f5f9' : '#fffbeb',
+                                                            color: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? '#94a3b8' : '#92400e',
+                                                            fontSize: 10, fontWeight: 800,
+                                                            cursor: selectedForMerge.length === 0 || deduping || dedupMergingGroupKey ? 'not-allowed' : 'pointer',
+                                                            whiteSpace: 'nowrap',
+                                                        }}
+                                                    >
+                                                        {dedupMergingGroupKey === groupKey ? '整理中…' : `整理已选 ${selectedForMerge.length} 条`}
+                                                    </button>
+                                                )}
                                             </div>
                                             <div style={{
                                                 padding: 8, borderRadius: 8, background: '#ecfdf5',
@@ -4695,7 +4749,7 @@ create table if not exists memory_vectors (
                                                     AI 理由：{group.aiReason}
                                                 </div>
                                             )}
-                                            {mergeDraftForGroup && (
+                                            {dedupTask.mode === 'ai' && mergeDraftForGroup && (
                                                 <div style={{
                                                     marginTop: 10, padding: 10, borderRadius: 10,
                                                     background: '#fefce8', border: '1px solid #fde68a',
@@ -4765,7 +4819,7 @@ create table if not exists memory_vectors (
                                         cursor: (deduping || dedupSelectedDeleteIds.size === 0) ? 'not-allowed' : 'pointer',
                                     }}
                                 >
-                                    删除已勾选的 {dedupSelectedDeleteIds.size} 条
+                                    {dedupTask.mode === 'ai' ? `删除已勾选的 ${dedupSelectedDeleteIds.size} 条` : `確認刪除這 ${dedupSelectedDeleteIds.size} 條重複`}
                                 </button>
                             </div>
                         </div>

@@ -110,6 +110,10 @@ export type {
     CharacterDedupScanScope,
 } from './deduplicate';
 
+// 全局去重任务（后台运行 + 回来可恢复进度 / 候选 / 结果）
+export { dedupTaskStore, useDedupTask } from './dedupTaskStore';
+export type { DedupMode, DedupTaskState, DedupTaskStatus } from './dedupTaskStore';
+
 // 导出 / 导入（接入外置记忆库、跨设备迁移用）
 export { exportMemoryPalace, importMemoryPalace, isMemoryPalaceExportFile } from './export';
 export type { MemoryPalaceExportFile, CharacterMemoryPalaceExport, ExportedVector, ImportResult } from './export';
