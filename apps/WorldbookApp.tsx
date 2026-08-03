@@ -7,7 +7,7 @@ import {
     analyzeWorldbookDuplicates,
     buildWorldbookDedupeAiApiChoices,
     parseStandardWorldbook,
-    reviewWorldbookDuplicatesWithAI,
+    reviewSelectedWorldbooksWithAI,
     serializeStandardWorldbook,
     splitWorldbookKeywords,
     WORLDBOOK_POSITION_DESCRIPTIONS,
@@ -381,13 +381,7 @@ const WorldbookApp: React.FC = () => {
     const runDedupeAiReview = async () => {
         if (isDedupeAiReviewing) return;
         if (selectedDedupeBooks.length < 2) {
-            addToast('至少选择 2 本世界书才能 AI 深检', 'error');
-            return;
-        }
-        const currentAnalysis = dedupeAnalysis || analyzeWorldbookDuplicates(selectedDedupeBooks);
-        if (!dedupeAnalysis) setDedupeAnalysis(currentAnalysis);
-        if (currentAnalysis.findings.length === 0) {
-            addToast('本地检测没有候选重复项，暂时不需要 AI 深检', 'info');
+            addToast('至少选择 2 本世界书才能 AI 深度检查', 'error');
             return;
         }
         if (!dedupeAiSelectedChoice.configured) {
@@ -396,15 +390,20 @@ const WorldbookApp: React.FC = () => {
         }
         setIsDedupeAiReviewing(true);
         try {
-            const result = await reviewWorldbookDuplicatesWithAI({
+            if (!dedupeAnalysis) {
+                setDedupeAnalysis(analyzeWorldbookDuplicates(selectedDedupeBooks));
+            }
+            const result = await reviewSelectedWorldbooksWithAI({
                 api: dedupeAiSelectedChoice.api,
                 books: selectedDedupeBooks,
-                analysis: currentAnalysis,
             });
             setDedupeAiResult(result);
-            addToast(`AI 深检完成：${result.reviews.length} 组结论`, 'success');
+            addToast(result.reviews.length > 0
+                ? `AI 深度检查完成：${result.reviews.length} 组建议`
+                : 'AI 深度检查完成：没有发现需要处理的重复组',
+                'success');
         } catch (error: any) {
-            addToast(error?.message || 'AI 深检失败', 'error');
+            addToast(error?.message || 'AI 深度检查失败', 'error');
         } finally {
             setIsDedupeAiReviewing(false);
         }
@@ -747,7 +746,7 @@ const WorldbookApp: React.FC = () => {
                                     <MagnifyingGlass size={16} weight="bold" className="text-indigo-500" /> 世界书去重检测
                                 </div>
                                 <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                                    已选 <span className="font-bold text-indigo-600">{selectedDedupeBooks.length}</span> / {worldbooks.length} 本。检测只在本机运行，不会自动删除或合并内容。
+                                    已选 <span className="font-bold text-indigo-600">{selectedDedupeBooks.length}</span> / {worldbooks.length} 本。快速检测只在本机运行；AI 深度检查会读取选中的正文，但不会自动删除或合并。
                                 </p>
                             </div>
                             <button
@@ -776,8 +775,47 @@ const WorldbookApp: React.FC = () => {
                                 disabled={selectedDedupeBooks.length < 2}
                                 className="py-2.5 rounded-xl bg-indigo-500 text-white text-xs font-bold shadow-sm shadow-indigo-200 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
-                                开始检测
+                                快速检测
                             </button>
+                        </div>
+
+                        <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="text-xs font-black text-emerald-700">AI 深度检查</div>
+                                    <div className="mt-0.5 text-[10px] leading-relaxed text-emerald-700/70">
+                                        想认真整理、确认哪些该合并或改标题时用这个。它会直接读选中的世界书正文，不受快速检测结果限制。
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={runDedupeAiReview}
+                                    disabled={selectedDedupeBooks.length < 2 || isDedupeAiReviewing}
+                                    className="shrink-0 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-white shadow-sm shadow-emerald-200 active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
+                                >
+                                    {isDedupeAiReviewing ? '检查中…' : 'AI 深度检查'}
+                                </button>
+                            </div>
+                            <div className="mt-3 space-y-1.5">
+                                <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">本次使用</label>
+                                <select
+                                    value={dedupeAiSelectedChoice.id}
+                                    onChange={(event) => setDedupeAiChoiceId(event.target.value)}
+                                    disabled={isDedupeAiReviewing}
+                                    className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-bold text-emerald-800 outline-none disabled:opacity-60"
+                                >
+                                    {dedupeAiApiChoices.options.map(option => (
+                                        <option key={option.id} value={option.id}>{option.label}</option>
+                                    ))}
+                                </select>
+                                <p className="text-[10px] leading-relaxed text-emerald-700/65">
+                                    {dedupeAiSelectedChoice.helperText} 推荐在想做最终整理前使用；会产生 API 用量。一次最多读取前 24 本，很多时建议按分组扫。
+                                </p>
+                                {!dedupeAiSelectedChoice.configured && (
+                                    <p className="text-[10px] leading-relaxed text-rose-500">
+                                        当前选择缺 URL、Key 或模型，补齐后才能深度检查。
+                                    </p>
+                                )}
+                            </div>
                         </div>
 
                         {dedupeAnalysis && (
@@ -796,47 +834,6 @@ const WorldbookApp: React.FC = () => {
                                         <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.highestDuplicateRate}%</div>
                                     </div>
                                 </div>
-
-                                {dedupeAnalysis.findings.length > 0 && (
-                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0">
-                                                <div className="text-xs font-black text-emerald-700">AI 语义深检</div>
-                                                <div className="mt-0.5 text-[10px] leading-relaxed text-emerald-700/70">
-                                                    默认跟随平时聊天用的模型；如果你平时用的是比较贵的大模型，建议换成便宜一点、通用能力还不错的模型，避免大材小用。
-                                                </div>
-                                            </div>
-                                            <button
-                                                onClick={runDedupeAiReview}
-                                                disabled={isDedupeAiReviewing}
-                                                className="shrink-0 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-white shadow-sm shadow-emerald-200 active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
-                                            >
-                                                {isDedupeAiReviewing ? '深检中…' : 'AI 深检'}
-                                            </button>
-                                        </div>
-                                        <div className="mt-3 space-y-1.5">
-                                            <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">本次使用</label>
-                                            <select
-                                                value={dedupeAiSelectedChoice.id}
-                                                onChange={(event) => setDedupeAiChoiceId(event.target.value)}
-                                                disabled={isDedupeAiReviewing}
-                                                className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-bold text-emerald-800 outline-none disabled:opacity-60"
-                                            >
-                                                {dedupeAiApiChoices.options.map(option => (
-                                                    <option key={option.id} value={option.id}>{option.label}</option>
-                                                ))}
-                                            </select>
-                                            <p className="text-[10px] leading-relaxed text-emerald-700/65">
-                                                {dedupeAiSelectedChoice.helperText} 只发送本地检测出的候选对，不会自动改世界书。
-                                            </p>
-                                            {!dedupeAiSelectedChoice.configured && (
-                                                <p className="text-[10px] leading-relaxed text-rose-500">
-                                                    当前选择缺 URL、Key 或模型，补齐后才能深检。
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
 
                                 {dedupeAiResult && dedupeAiResult.reviews.length > 0 && (
                                     <div className="space-y-3">
@@ -906,7 +903,7 @@ const WorldbookApp: React.FC = () => {
 
                                 {dedupeAnalysis.findings.length === 0 ? (
                                     <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-relaxed text-emerald-700">
-                                        未发现明显重复。当前阈值下，这批世界书可以先视为没有需要处理的重复内容。
+                                        快速检测未发现明显重复。它只是本地粗扫；如果上方 AI 深度检查有建议，以 AI 建议和你的人工判断为准。
                                     </div>
                                 ) : (
                                     <div className="space-y-3">

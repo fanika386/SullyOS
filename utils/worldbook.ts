@@ -145,6 +145,13 @@ export interface ReviewWorldbookDuplicatesWithAIInput {
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
+export interface ReviewSelectedWorldbooksWithAIInput {
+    api: WorldbookDedupeAiApiConfig;
+    books: WorldbookLike[];
+    maxBooks?: number;
+    fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+}
+
 export const WORLDBOOK_POSITION_LABELS: Record<WorldbookPosition, string> = {
     0: '角色设定前',
     1: '角色设定后',
@@ -952,6 +959,38 @@ const buildWorldbookDedupeAiPrompt = (
     }, null, 2);
 };
 
+const buildDirectWorldbookDedupeAiPrompt = (
+    books: WorldbookLike[],
+): string => JSON.stringify({
+    task: 'direct_review_selected_worldbooks',
+    reviewRule: '请直接阅读 selectedBooks 的正文，找出意思重复、明显重叠、互补或冲突的世界书组；不要依赖本地重复率。',
+    selectedBooks: books.map(book => ({
+        id: book.id,
+        title: book.title,
+        category: book.category || '',
+        keywords: [...(book.key || []), ...(book.keysecondary || [])].slice(0, 12),
+        contentExcerpt: excerptForAi(book.content || ''),
+    })),
+    outputSchema: {
+        reviews: [{
+            bookIds: ['必须使用 selectedBooks 里的真实 id，至少 2 个'],
+            bookTitles: ['可选：直接返回真实书名'],
+            relation: 'duplicate | overlap | complementary | conflict | unrelated',
+            functionalOverlap: '0-100，粗略判断这一组有多像',
+            verdict: '一句通俗中文结论，必须写真实书名',
+            mergeAdvice: ['短句建议：怎么合并、删哪句、保留哪条、标题或关键词怎么改'],
+            keepAdvice: '可选：用简单话说明哪条更适合保留',
+            needsHumanReview: ['还拿不准、需要用户自己确认的小问题'],
+        }],
+    },
+    writingStyle: [
+        '这是 AI 直接深度检查，不是本地快速检测。',
+        '如果没有值得处理的重复或重叠，返回 {"reviews":[]}',
+        '不要说 Book A、Book B、Book C；请直接说书名。',
+        '优先输出短句，每条建议尽量 30 个中文字符以内。',
+    ],
+}, null, 2);
+
 const replaceAiBookAliasesWithTitles = (value: string, context?: WorldbookDedupeAiReviewContext): string => {
     if (!value || !context) return value;
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
@@ -1005,6 +1044,70 @@ const parseWorldbookDedupeAiReviews = (
         throw new Error('AI 深检没有返回可用的候选结论');
     }
     return reviews;
+};
+
+const parseDirectWorldbookDedupeAiReviews = (
+    rawText: string,
+    books: WorldbookLike[],
+): WorldbookDuplicateAiReview[] => {
+    const parsed = extractJson(rawText);
+    const rawReviews = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.reviews)
+            ? parsed.reviews
+            : Array.isArray(parsed?.results)
+                ? parsed.results
+                : [];
+    const order = bookOrderIndex(books);
+    const bookById = new Map(books.map(book => [book.id, book]));
+    const idsByTitle = new Map<string, string[]>();
+    books.forEach(book => {
+        const titleKey = normalizeComparableText(book.title || '');
+        if (!titleKey) return;
+        idsByTitle.set(titleKey, [...(idsByTitle.get(titleKey) || []), book.id]);
+    });
+
+    const resolveIds = (item: any): string[] => {
+        const rawIds = [
+            ...asStringArray(item?.bookIds),
+            ...asStringArray(item?.ids),
+            ...asStringArray(item?.worldbookIds),
+        ];
+        const fromTitles = [
+            ...asStringArray(item?.bookTitles),
+            ...asStringArray(item?.titles),
+        ].flatMap(title => idsByTitle.get(normalizeComparableText(title)) || []);
+        const ids = [...rawIds, ...fromTitles].filter(id => bookById.has(id));
+        return sortBookIdsByInputOrder(Array.from(new Set(ids)), order);
+    };
+
+    return rawReviews.flatMap((item: any): WorldbookDuplicateAiReview[] => {
+        const ids = resolveIds(item);
+        if (ids.length < 2) return [];
+        const bookRefs = ids.map(id => {
+            const found = bookById.get(id);
+            return { id, title: found?.title || id, category: found?.category };
+        });
+        const context: WorldbookDedupeAiReviewContext = {
+            findingId: `direct:${ids.join('__')}`,
+            bookRefs,
+            findings: [],
+            candidate: {},
+        };
+        const cleanText = (value: string): string => replaceAiBookAliasesWithTitles(value, context);
+        const verdict = cleanText(makeTextExcerpt(String(item?.verdict || item?.summary || item?.reason || '').trim(), 240));
+        return [{
+            findingId: context.findingId,
+            bookIds: ids,
+            bookTitles: bookRefs.map(book => book.title),
+            relation: normalizedAiRelation(item?.relation || item?.type),
+            functionalOverlap: Math.round(clamp(item?.functionalOverlap ?? item?.overlap ?? item?.score, 0, 100, 0)),
+            verdict: verdict || 'AI 认为这组候选需要人工复核。',
+            mergeAdvice: asReviewTextArray(item?.mergeAdvice || item?.suggestions || item?.advice).map(cleanText),
+            keepAdvice: cleanText(String(item?.keepAdvice || item?.keep || '').trim()) || undefined,
+            needsHumanReview: asReviewTextArray(item?.needsHumanReview || item?.questions || item?.risks).map(cleanText),
+        }];
+    });
 };
 
 export const reviewWorldbookDuplicatesWithAI = async ({
@@ -1062,6 +1165,61 @@ export const reviewWorldbookDuplicatesWithAI = async ({
         reviewedAt: Date.now(),
         rawText,
         reviews: parseWorldbookDedupeAiReviews(rawText, contextById),
+    };
+};
+
+export const reviewSelectedWorldbooksWithAI = async ({
+    api,
+    books,
+    maxBooks = 24,
+    fetchImpl = fetch,
+}: ReviewSelectedWorldbooksWithAIInput): Promise<WorldbookDuplicateAiResult> => {
+    const baseUrl = String(api?.baseUrl || '').trim().replace(/\/+$/, '');
+    const apiKey = String(api?.apiKey || '').trim();
+    const model = String(api?.model || '').trim();
+    if (!baseUrl || !apiKey || !model) {
+        throw new Error('请先配置世界书去重 AI 的 URL、Key 和模型');
+    }
+
+    const selectedBooks = books
+        .filter(book => book && book.id && (book.title || book.content))
+        .slice(0, Math.max(2, Math.floor(maxBooks)));
+    if (selectedBooks.length < 2) {
+        throw new Error('至少选择 2 本世界书才能 AI 深度检查');
+    }
+
+    const temperature = clamp(api.temperature, 0, 2, 0.1);
+    const response = await fetchImpl(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model,
+            messages: [
+                { role: 'system', content: WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT },
+                { role: 'user', content: buildDirectWorldbookDedupeAiPrompt(selectedBooks) },
+            ],
+            temperature,
+            stream: false,
+            max_tokens: 2400,
+        }),
+    });
+
+    if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`世界书 AI 深度检查请求失败 (HTTP ${response.status})${detail ? `：${detail.slice(0, 160)}` : ''}`);
+    }
+
+    const data = await safeResponseJson(response);
+    const rawText = extractContent(data);
+    if (!rawText) throw new Error('世界书 AI 深度检查没有返回内容');
+    return {
+        model,
+        reviewedAt: Date.now(),
+        rawText,
+        reviews: parseDirectWorldbookDedupeAiReviews(rawText, selectedBooks),
     };
 };
 

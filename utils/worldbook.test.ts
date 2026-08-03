@@ -7,6 +7,7 @@ import {
     isWorldbookEntryActive,
     parseStandardWorldbook,
     reviewWorldbookDuplicatesWithAI,
+    reviewSelectedWorldbooksWithAI,
     resolveWorldbookEntries,
     serializeStandardWorldbook,
     splitWorldbookSections,
@@ -478,6 +479,70 @@ describe('worldbook duplicate AI review', () => {
         expect(result.reviews[0].mergeAdvice[0]).toContain('「观星公会」');
         expect(result.reviews[0].mergeAdvice[0]).toContain('「星图管理员」');
         expect(result.reviews[0].keepAdvice).toContain('「星图档案」');
+    });
+
+    it('can ask AI to directly review selected books without local duplicate candidates', async () => {
+        const books = [
+            book({
+                id: 'moon-city-a',
+                title: '月城旧灾',
+                key: ['月城'],
+                content: '月城的人害怕外来者，因为十年前发生过灾难。',
+            }),
+            book({
+                id: 'moon-city-b',
+                title: '蓝都戒备',
+                key: ['蓝都'],
+                content: '这个城市对陌生人很警惕，背后和过去一次事故有关。',
+            }),
+            book({
+                id: 'bakery',
+                title: '港口面包店',
+                key: ['面包'],
+                content: '港口面包店每天清晨开门，招牌是蜂蜜牛角包。',
+            }),
+        ];
+        const localAnalysis = analyzeWorldbookDuplicates(books);
+        expect(localAnalysis.findings).toHaveLength(0);
+
+        let requestedBody: any = null;
+        const result = await reviewSelectedWorldbooksWithAI({
+            api: { baseUrl: 'https://api.example.test/v1', apiKey: 'sk-test', model: 'cheap-reviewer' },
+            books,
+            fetchImpl: async (_url, init) => {
+                requestedBody = JSON.parse(String(init?.body));
+                return new Response(JSON.stringify({
+                    choices: [{
+                        message: {
+                            content: JSON.stringify({
+                                reviews: [{
+                                    bookIds: ['moon-city-a', 'moon-city-b'],
+                                    relation: 'duplicate',
+                                    functionalOverlap: 86,
+                                    verdict: '「月城旧灾」和「蓝都戒备」都在说同一座城市因旧事故排斥外来者。',
+                                    mergeAdvice: ['合并旧事故和排斥外来者这两点。'],
+                                    keepAdvice: '保留信息更完整的一条。',
+                                    needsHumanReview: ['确认月城和蓝都是否是同一座城市。'],
+                                }],
+                            }),
+                        },
+                    }],
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            },
+        });
+
+        expect(requestedBody.messages[1].content).toContain('direct_review_selected_worldbooks');
+        expect(requestedBody.messages[1].content).toContain('月城的人害怕外来者');
+        expect(requestedBody.messages[1].content).toContain('陌生人很警惕');
+        expect(requestedBody.messages[1].content).toContain('蜂蜜牛角包');
+        expect(result.reviews).toHaveLength(1);
+        expect(result.reviews[0]).toMatchObject({
+            findingId: 'direct:moon-city-a__moon-city-b',
+            bookIds: ['moon-city-a', 'moon-city-b'],
+            bookTitles: ['月城旧灾', '蓝都戒备'],
+            relation: 'duplicate',
+            functionalOverlap: 86,
+        });
     });
 
     it('rejects incomplete AI review API configuration before making a request', async () => {
