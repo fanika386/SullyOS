@@ -9,6 +9,7 @@ import {
     splitWorldbookSections,
     type WorldbookScanMessage,
 } from './worldbook';
+import { getUserProfileInstructionText } from './userProfiles';
 
 /**
  * Memory Central
@@ -184,10 +185,7 @@ export const ContextBuilder = {
         if (!groupOptions?.skipUserProfile) {
             context += `### 互动对象 (User)\n`;
             context += `- 名字: ${user.name}\n`;
-            context += `- 设定/备注: ${user.bio || '无'}\n`;
-            if (user.personaPrompt?.trim()) {
-                context += `- 额外身份设定: ${user.personaPrompt.trim()}\n`;
-            }
+            context += `- 设定/备注: ${getUserProfileInstructionText(user) || '无'}\n`;
             context += `\n`;
         }
 

@@ -5,9 +5,10 @@ import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
 import {
     DEFAULT_USER_PROFILE_ID,
+    getUserProfileInstructionText,
+    USER_PROFILE_BIO_LABEL,
+    USER_PROFILE_BIO_PLACEHOLDER,
     USER_PROFILE_BINDING_REMINDER,
-    USER_PROFILE_PERSONA_PROMPT_LABEL,
-    USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER,
 } from '../utils/userProfiles';
 
 const UserApp: React.FC = () => {
@@ -32,6 +33,10 @@ const UserApp: React.FC = () => {
             || userProfiles.find(profile => profile.id === DEFAULT_USER_PROFILE_ID)
             || userProfile;
     }, [selectedProfileId, userProfile, userProfiles]);
+
+    const selectedProfileInstructionText = useMemo(() => {
+        return getUserProfileInstructionText(selectedProfile);
+    }, [selectedProfile]);
 
     useEffect(() => {
         if (userProfiles.some(profile => profile.id === selectedProfileId)) return;
@@ -202,20 +207,16 @@ const UserApp: React.FC = () => {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
                                 </svg>
                             </span>
-                            <h2 className="text-sm font-bold text-slate-700">关于我 / 设定</h2>
+                            <h2 className="text-sm font-bold text-slate-700">{USER_PROFILE_BIO_LABEL}</h2>
                         </div>
+                        <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
+                            这里写的内容会随当前面具一起发给 AI。普通写身份和关系，进阶再写互动要求。
+                        </p>
                         <textarea
-                            value={selectedProfile.bio}
-                            onChange={(e) => updateSelectedProfile({ bio: e.target.value })}
-                            className="w-full h-36 bg-slate-50 focus:bg-white border border-slate-100 focus:border-primary/30 rounded-2xl px-4 py-3 text-sm text-slate-700 leading-relaxed resize-none outline-none transition-all placeholder:text-slate-300"
-                            placeholder="描述你自己..."
-                        />
-                        <label className="text-[11px] font-bold text-slate-400 tracking-widest block mt-4 mb-1 pl-1">{USER_PROFILE_PERSONA_PROMPT_LABEL}</label>
-                        <textarea
-                            value={selectedProfile.personaPrompt || ''}
-                            onChange={(e) => updateSelectedProfile({ personaPrompt: e.target.value })}
-                            className="w-full h-28 bg-slate-50 focus:bg-white border border-slate-100 focus:border-primary/30 rounded-2xl px-4 py-3 text-sm text-slate-700 leading-relaxed resize-none outline-none transition-all placeholder:text-slate-300"
-                            placeholder={USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER}
+                            value={selectedProfileInstructionText}
+                            onChange={(e) => updateSelectedProfile({ bio: e.target.value, personaPrompt: '' })}
+                            className="w-full h-48 bg-slate-50 focus:bg-white border border-slate-100 focus:border-primary/30 rounded-2xl px-4 py-3 text-sm text-slate-700 leading-relaxed resize-none outline-none transition-all placeholder:text-slate-300"
+                            placeholder={USER_PROFILE_BIO_PLACEHOLDER}
                         />
                     </div>
 

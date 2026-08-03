@@ -5,10 +5,21 @@ export const DEFAULT_USER_PROFILE_ID = 'me';
 export const USER_PROFILE_BINDING_REMINDER =
   '建议把角色绑定当成长期设定：选好后尽量不要频繁切换。频繁改绑可能让旧聊天、记忆、手账、主动消息或其它功能里的身份线索变得不一致。';
 
-export const USER_PROFILE_PERSONA_PROMPT_LABEL = '给 AI 的补充说明';
+export const USER_PROFILE_BIO_LABEL = '面具设定';
 
-export const USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER =
-  '可以不填。比如：请把我当成林夏；我们已经认识很久；说话更亲近一点。';
+export const USER_PROFILE_BIO_PLACEHOLDER =
+  '可以不填。写清楚这个面具的你是谁、性格、背景、和角色的关系。进阶可写：请把我当成林夏；我们已经认识很久；说话更亲近一点。';
+
+export const getUserProfileInstructionText = (
+  profile: Pick<UserProfile, 'bio' | 'personaPrompt'> | null | undefined,
+): string => {
+  const bio = profile?.bio?.trim() || '';
+  const legacyPersonaPrompt = profile?.personaPrompt?.trim() || '';
+
+  if (!bio) return legacyPersonaPrompt;
+  if (!legacyPersonaPrompt || bio.includes(legacyPersonaPrompt)) return bio;
+  return `${bio}\n\n${legacyPersonaPrompt}`;
+};
 
 const generatedProfileId = (index: number) => `persona_import_${index + 1}`;
 

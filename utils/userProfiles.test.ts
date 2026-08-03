@@ -3,10 +3,11 @@ import type { UserProfile } from '../types';
 import {
   buildUserProfileBackupFields,
   DEFAULT_USER_PROFILE_ID,
+  getUserProfileInstructionText,
   resolveUserProfileForCharacter,
+  USER_PROFILE_BIO_LABEL,
+  USER_PROFILE_BIO_PLACEHOLDER,
   USER_PROFILE_BINDING_REMINDER,
-  USER_PROFILE_PERSONA_PROMPT_LABEL,
-  USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER,
 } from './userProfiles';
 
 const defaultProfile: UserProfile = {
@@ -79,10 +80,34 @@ describe('USER_PROFILE_BINDING_REMINDER', () => {
   });
 });
 
-describe('persona prompt field copy', () => {
-  it('uses simple wording that tells users the field is optional and AI-facing', () => {
-    expect(USER_PROFILE_PERSONA_PROMPT_LABEL).toBe('给 AI 的补充说明');
-    expect(USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER).toContain('可以不填');
-    expect(USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER).toContain('请把我当成');
+describe('user profile setting copy', () => {
+  it('uses one simple optional field for the persona setting', () => {
+    expect(USER_PROFILE_BIO_LABEL).toBe('面具设定');
+    expect(USER_PROFILE_BIO_PLACEHOLDER).toContain('可以不填');
+    expect(USER_PROFILE_BIO_PLACEHOLDER).toContain('你是谁');
+    expect(USER_PROFILE_BIO_PLACEHOLDER).toContain('进阶');
+  });
+});
+
+describe('getUserProfileInstructionText', () => {
+  it('folds legacy personaPrompt into the single user profile setting text', () => {
+    expect(getUserProfileInstructionText({
+      bio: '我叫林夏，是青梅竹马。',
+      personaPrompt: '请把我当成林夏，我们已经认识很久。',
+    } as UserProfile)).toBe('我叫林夏，是青梅竹马。\n\n请把我当成林夏，我们已经认识很久。');
+  });
+
+  it('falls back to legacy personaPrompt when bio is empty', () => {
+    expect(getUserProfileInstructionText({
+      bio: '',
+      personaPrompt: '请把我当成旁白。',
+    } as UserProfile)).toBe('请把我当成旁白。');
+  });
+
+  it('does not duplicate legacy personaPrompt already written into bio', () => {
+    expect(getUserProfileInstructionText({
+      bio: '我叫林夏。\n\n请把我当成林夏。',
+      personaPrompt: '请把我当成林夏。',
+    } as UserProfile)).toBe('我叫林夏。\n\n请把我当成林夏。');
   });
 });
