@@ -2866,6 +2866,33 @@ export default function MemoryPalaceApp() {
                     </div>
                 </div>
 
+                {!isGlobal && char && (
+                    <div style={{
+                        marginBottom: 16, padding: 14, borderRadius: 16,
+                        background: '#f8fafc', border: '1px solid #cbd5e1',
+                    }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Icon name="search" size={14} />
+                            <span>记忆去重</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.7, marginBottom: 10 }}>
+                            只扫描 <b>{char.name}</b> 的记忆；可以做精确正文、近似语义和 AI 语义审核。
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => document.getElementById('memory-dedup-tool')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                            style={{
+                                width: '100%', padding: '9px 0', borderRadius: 12,
+                                border: '1px solid #cbd5e1', background: 'white',
+                                color: '#334155', fontSize: 12, fontWeight: 800,
+                                cursor: 'pointer',
+                            }}
+                        >
+                            打开记忆去重
+                        </button>
+                    </div>
+                )}
+
                 {/* 费用警告 */}
                 {isGlobal && (<>
 
@@ -4408,7 +4435,7 @@ create table if not exists memory_vectors (
 
                 {/* 当前角色维护工具：记忆去重 */}
                 {!isGlobal && char && (
-                <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 16, padding: 16, border: '1px solid #cbd5e1' }}>
+                <div id="memory-dedup-tool" style={{ marginTop: 16, background: '#f8fafc', borderRadius: 16, padding: 16, border: '1px solid #cbd5e1', scrollMarginTop: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Icon name="search" size={14} />
                         <span>维护工具：记忆去重</span>
