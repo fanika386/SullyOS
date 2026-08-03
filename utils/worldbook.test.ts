@@ -263,6 +263,9 @@ describe('worldbook duplicate AI review', () => {
         });
 
         expect(choices.selected.id).toBe('preset:preset-mini');
+        expect(choices.options[0].helperText).toContain('默认跟随平时聊天用的模型');
+        expect(choices.options[0].helperText).toContain('比较贵');
+        expect(choices.options[0].helperText).toContain('大材小用');
         expect(choices.selected.label).toContain('便宜小模型');
         expect(choices.selected.api).toMatchObject({
             baseUrl: 'https://mini.example.test/v1',
@@ -344,6 +347,62 @@ describe('worldbook duplicate AI review', () => {
             functionalOverlap: 88,
             verdict: '两条都在解释观星公会如何维护星图和月城航线。',
         });
+    });
+
+    it('replaces AI Book A and Book B wording with real worldbook titles', async () => {
+        const books = [
+            book({
+                id: 'guild-a',
+                title: '观星公会',
+                key: ['观星公会', '星图'],
+                content: '观星公会负责维护星图。成员会记录流星雨、潮汐异常和月城航线。',
+            }),
+            book({
+                id: 'guild-b',
+                title: '星图管理员',
+                key: ['星图', '管理员'],
+                content: '星图管理员隶属于观星公会，主要工作是校准月城航线，并把潮汐异常写入档案。',
+            }),
+        ];
+        const analysis = analyzeWorldbookDuplicates(books);
+        let requestedBody: any = null;
+
+        const result = await reviewWorldbookDuplicatesWithAI({
+            api: { baseUrl: 'https://api.example.test/v1', apiKey: 'sk-test', model: 'cheap-reviewer' },
+            books,
+            analysis,
+            fetchImpl: async (_url, init) => {
+                requestedBody = JSON.parse(String(init?.body));
+                return new Response(JSON.stringify({
+                    choices: [{
+                        message: {
+                            content: JSON.stringify({
+                                reviews: [{
+                                    findingId: 'guild-a__guild-b',
+                                    relation: 'overlap',
+                                    functionalOverlap: 72,
+                                    verdict: 'Book A 和 Book B 在讲同一套星图工作。',
+                                    mergeAdvice: ['把 Book A 的组织说明和 Book B 的职位说明合在一起。'],
+                                    keepAdvice: '保留 Book B 当主条目。',
+                                    needsHumanReview: ['确认 Book A 是否还包含独立组织设定。'],
+                                }],
+                            }),
+                        },
+                    }],
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            },
+        });
+
+        expect(requestedBody.messages[0].content).toContain('不要用 Book A、Book B');
+        expect(requestedBody.messages[1].content).toContain('观星公会');
+        expect(requestedBody.messages[1].content).toContain('星图管理员');
+        expect(JSON.stringify(result.reviews[0])).not.toContain('Book A');
+        expect(JSON.stringify(result.reviews[0])).not.toContain('Book B');
+        expect(result.reviews[0].verdict).toContain('「观星公会」');
+        expect(result.reviews[0].verdict).toContain('「星图管理员」');
+        expect(result.reviews[0].mergeAdvice[0]).toContain('「观星公会」');
+        expect(result.reviews[0].keepAdvice).toContain('「星图管理员」');
+        expect(result.reviews[0].needsHumanReview[0]).toContain('「观星公会」');
     });
 
     it('rejects incomplete AI review API configuration before making a request', async () => {

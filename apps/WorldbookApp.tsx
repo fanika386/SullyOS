@@ -803,7 +803,7 @@ const WorldbookApp: React.FC = () => {
                                             <div className="min-w-0">
                                                 <div className="text-xs font-black text-emerald-700">AI 语义深检</div>
                                                 <div className="mt-0.5 text-[10px] leading-relaxed text-emerald-700/70">
-                                                    粗略扫一下重复，并给合并/保留建议；可以选便宜 API，不必用日常聊天的大模型。
+                                                    默认跟随平时聊天用的模型；如果你平时用的是比较贵的大模型，建议换成便宜一点、通用能力还不错的模型，避免大材小用。
                                                 </div>
                                             </div>
                                             <button

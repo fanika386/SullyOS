@@ -200,7 +200,7 @@ export const buildWorldbookDedupeAiApiChoices = ({
     const options: WorldbookDedupeAiApiChoice[] = [{
         id: 'chat',
         label: `聊天 API：${chat.model || '未配置模型'}`,
-        helperText: '跟随平时聊天使用的模型，方便但可能更贵。',
+        helperText: '默认跟随平时聊天用的模型；如果平时用的是比较贵的大模型，建议换成便宜一点、通用能力还不错的模型，避免大材小用。',
         api: chat,
         configured: isDedupeApiConfigured(chat),
     }];
@@ -780,6 +780,7 @@ export const analyzeWorldbookDuplicates = (
 const WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT = [
     '你是世界书去重小助手，只判断候选世界书是不是在说同一件事。',
     '请用通俗、短句、直接的中文，像给普通用户写提示；不要写学术分析，不要堆专业术语。',
+    '必须使用输入里的真实书名，不要用 Book A、Book B、A 书、B 书代替。',
     '把建议写成用户看得懂的操作：合并哪部分、删哪句、保留哪条、标题或关键词怎么改。',
     '不要删除或自动改写用户内容，只输出给人工确认的简单建议。',
     '必须只返回 JSON，不要 Markdown，不要解释。',
@@ -846,8 +847,8 @@ const buildWorldbookDedupeAiPrompt = (
                 findingId: 'string，必须等于输入候选的 findingId',
                 relation: 'duplicate | overlap | complementary | conflict | unrelated',
                 functionalOverlap: '0-100，粗略判断两条有多像',
-                verdict: '一句通俗中文结论，例如：这两条主要在说同一件事，可以合在一起。',
-                mergeAdvice: ['短句建议：怎么合并、删哪句、保留哪条、标题或关键词怎么改'],
+                verdict: '一句通俗中文结论，必须写真实书名，例如：「月城设定」和「月城历史」主要在说同一件事，可以合在一起。',
+                mergeAdvice: ['短句建议：用真实书名说明怎么合并、删哪句、保留哪条、标题或关键词怎么改'],
                 keepAdvice: '可选：用简单话说明哪条更适合保留',
                 needsHumanReview: ['还拿不准、需要用户自己确认的小问题'],
             }],
@@ -855,15 +856,27 @@ const buildWorldbookDedupeAiPrompt = (
         writingStyle: [
             '这是粗略扫重和修复建议，不是最终判定。',
             '不用写学术分析，也不要使用“功能覆盖”“语义一致性”等专业说法。',
+            '不要说 Book A、Book B；用户看多本世界书时分不清，请直接说书名。',
             '优先输出短句，每条建议尽量 30 个中文字符以内。',
         ],
         candidates,
     }, null, 2);
 };
 
+const replaceAiBookAliasesWithTitles = (value: string, finding?: WorldbookDuplicateFinding): string => {
+    if (!value || !finding) return value;
+    const titleA = `「${finding.bookA.title}」`;
+    const titleB = `「${finding.bookB.title}」`;
+    return value
+        .replace(/\b[Bb]ook\s*A\b/g, titleA)
+        .replace(/\b[Bb]ook\s*B\b/g, titleB)
+        .replace(/书本\s*A|书本A|世界书\s*A|世界书A|条目\s*A|条目A|A\s*书/g, titleA)
+        .replace(/书本\s*B|书本B|世界书\s*B|世界书B|条目\s*B|条目B|B\s*书/g, titleB);
+};
+
 const parseWorldbookDedupeAiReviews = (
     rawText: string,
-    allowedFindingIds: Set<string>,
+    findingById: Map<string, WorldbookDuplicateFinding>,
 ): WorldbookDuplicateAiReview[] => {
     const parsed = extractJson(rawText);
     const rawReviews = Array.isArray(parsed)
@@ -875,16 +888,18 @@ const parseWorldbookDedupeAiReviews = (
                 : [];
     const reviews = rawReviews.flatMap((item: any): WorldbookDuplicateAiReview[] => {
         const findingId = String(item?.findingId || item?.id || item?.pairId || '').trim();
-        if (!allowedFindingIds.has(findingId)) return [];
-        const verdict = makeTextExcerpt(String(item?.verdict || item?.summary || item?.reason || '').trim(), 240);
+        const finding = findingById.get(findingId);
+        if (!finding) return [];
+        const cleanText = (value: string): string => replaceAiBookAliasesWithTitles(value, finding);
+        const verdict = cleanText(makeTextExcerpt(String(item?.verdict || item?.summary || item?.reason || '').trim(), 240));
         return [{
             findingId,
             relation: normalizedAiRelation(item?.relation || item?.type),
             functionalOverlap: Math.round(clamp(item?.functionalOverlap ?? item?.overlap ?? item?.score, 0, 100, 0)),
             verdict: verdict || 'AI 认为这组候选需要人工复核。',
-            mergeAdvice: asReviewTextArray(item?.mergeAdvice || item?.suggestions || item?.advice),
-            keepAdvice: String(item?.keepAdvice || item?.keep || '').trim() || undefined,
-            needsHumanReview: asReviewTextArray(item?.needsHumanReview || item?.questions || item?.risks),
+            mergeAdvice: asReviewTextArray(item?.mergeAdvice || item?.suggestions || item?.advice).map(cleanText),
+            keepAdvice: cleanText(String(item?.keepAdvice || item?.keep || '').trim()) || undefined,
+            needsHumanReview: asReviewTextArray(item?.needsHumanReview || item?.questions || item?.risks).map(cleanText),
         }];
     });
 
@@ -913,7 +928,9 @@ export const reviewWorldbookDuplicatesWithAI = async ({
         throw new Error('请先运行本地检测并获得候选重复项');
     }
 
-    const allowedFindingIds = new Set(findings.map(finding => finding.id));
+    const findingById = new Map<string, WorldbookDuplicateFinding>(
+        findings.map(finding => [finding.id, finding]),
+    );
     const temperature = clamp(api.temperature, 0, 2, 0.1);
     const response = await fetchImpl(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -945,7 +962,7 @@ export const reviewWorldbookDuplicatesWithAI = async ({
         model,
         reviewedAt: Date.now(),
         rawText,
-        reviews: parseWorldbookDedupeAiReviews(rawText, allowedFindingIds),
+        reviews: parseWorldbookDedupeAiReviews(rawText, findingById),
     };
 };
 

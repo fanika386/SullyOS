@@ -24,6 +24,45 @@
 后续注意：
 ```
 
+## 2026-08-03 - 世界书 AI 深检书名显示
+
+本次任务：
+
+优化世界书 AI 深检结果的可读性，避免用户在多本世界书里看到难以区分的 Book A / Book B。
+
+修改内容：
+
+- 在 `utils/worldbook.ts` 调整 AI 提示词，要求建议里直接使用真实世界书标题，不使用 Book A / Book B。
+- 在 AI 结果解析阶段增加兜底替换：如果模型仍返回 Book A / Book B，会按对应候选对替换为原始书名。
+- 在 `apps/WorldbookApp.tsx` 更新深检 API 提示文案，说明默认跟随聊天模型，贵模型建议换便宜且通用能力还不错的模型，避免大材小用。
+- 在 `utils/worldbook.test.ts` 增加测试，覆盖 Book A / Book B 替换和提示文案。
+
+新增模块：
+
+- 无。
+
+影响模块：
+
+- `apps/WorldbookApp.tsx`
+- `utils/worldbook.ts`
+- `utils/worldbook.test.ts`
+
+是否修改业务逻辑：
+
+- 是。AI 深检展示结果会把模型返回的 Book A / Book B 代称替换成真实世界书标题，降低多条候选同时查看时的混淆。
+
+是否更新 `01_PROJECT_MAP.md`：
+
+- 否。本次没有新增、移动或删除模块。
+
+是否更新 `02_ARCHITECTURE.md`：
+
+- 否。本次是世界书去重功能内部提示词和展示结果清洗。
+
+后续注意：
+
+- 兜底替换只处理明确的 Book A / Book B、书本A/B、世界书A/B 等代称，不改写其它 AI 建议内容。
+
 ## 2026-08-03 - 世界书 AI 深检 API 选择
 
 本次任务：
