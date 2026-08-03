@@ -246,6 +246,7 @@ export async function scanExactDuplicateMemories(
 ): Promise<ExactDuplicateMemoryPreview> {
     options.onStep?.('正在读取全部记忆节点…');
     const allNodes = await MemoryNodeDB.getAll();
+    options.onStep?.('正在筛选当前角色的记忆…');
     const allowed = options.charIds?.length ? new Set(options.charIds) : null;
     const nodes = allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes;
     options.onStep?.('正在按正文比对重复…');
@@ -872,7 +873,7 @@ export async function applyExactDuplicateMemoryDeletion(
     let remoteDeleted = 0;
     const failed: Array<{ id: string; error: string }> = [];
 
-    options.onStep?.('正在删除重复记忆…');
+    options.onStep?.('正在同步清理关联与向量…');
     for (const id of idsToDelete) {
         try {
             const result = await deleteMemoryNodeCascade(id, options.remoteConfig);

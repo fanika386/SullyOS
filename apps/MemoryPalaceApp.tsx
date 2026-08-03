@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
@@ -26,8 +26,12 @@ const RANGE_PAGE_SIZE = 100;
 const SEMANTIC_DEDUP_THRESHOLD = 0.96;
 const DEDUP_AI_SOURCE_MEMORY = 'memoryPalace';
 const DEDUP_AI_SOURCE_MAIN = 'main';
-/** 去重进度框至少显示这么久，避免扫描太快时用户根本看不到步骤小字 */
-const DEDUP_MIN_VISIBLE_MS = 600;
+/** 每个步骤小字最短展示时间：任务再快也会把阶段排队逐帧播完，让用户看到“正在做什么” */
+const DEDUP_STEP_MIN_MS = 250;
+/** 步骤播完后，进度框再停留一小会才收起 */
+const DEDUP_END_PAUSE_MS = 350;
+/** 待播步骤队列上限：删除几百条时避免回放太久，用最新步骤顶替队尾 */
+const DEDUP_MAX_QUEUED_STEPS = 6;
 
 /** 手动总结面板：把毫秒时间戳格式化成「2026-03-20 14:30」 */
 const fmtRangeTs = (ts: number): string => {
@@ -562,35 +566,95 @@ export default function MemoryPalaceApp() {
     const deduping = dedupTask.status === 'running';
     const dedupResult = dedupTask.result;
     const dedupReviewPreview = dedupTask.status === 'review' ? dedupTask.preview : null;
-    // 任务结束（done/error/review）时 store 会立刻清掉 progress，
-    // 这里把最后一帧进度多留一会，避免扫描太快时步骤小字一闪而过、根本没画出来。
-    const [stickyDedupProgress, setStickyDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
+    // 步骤小字播放器：每个阶段至少停留 DEDUP_STEP_MIN_MS 才切换，
+    // 任务跑得再快，也会把收到的阶段排队逐帧播完；慢任务则实时跟着更新。
+    const [displayDedupProgress, setDisplayDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
+    const dedupBaseRef = React.useRef<{ done: number; total: number; label: string; step?: string } | null>(null);
+    const dedupActiveRef = React.useRef(false);
+    const dedupStepQueueRef = React.useRef<string[]>([]);
+    const dedupStepTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const dedupHideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const displayDedupProgress = dedupTask.progress ?? stickyDedupProgress;
+    const dedupStartedAtRef = React.useRef(0);
+    const displayedStepRef = React.useRef<string | null>(null);
 
-    useEffect(() => {
-        if (dedupTask.progress) {
-            if (dedupHideTimerRef.current) {
-                clearTimeout(dedupHideTimerRef.current);
-                dedupHideTimerRef.current = null;
-            }
-            setStickyDedupProgress(dedupTask.progress);
-            return;
+    const clearDedupTimers = () => {
+        if (dedupStepTimerRef.current) {
+            clearTimeout(dedupStepTimerRef.current);
+            dedupStepTimerRef.current = null;
         }
-        const finished = dedupTask.status === 'done'
-            || dedupTask.status === 'error'
-            || dedupTask.status === 'review'
-            || dedupTask.status === 'interrupted';
-        if (!finished || !stickyDedupProgress || dedupHideTimerRef.current) return;
-        const remaining = DEDUP_MIN_VISIBLE_MS - (Date.now() - dedupTask.startedAt);
+        if (dedupHideTimerRef.current) {
+            clearTimeout(dedupHideTimerRef.current);
+            dedupHideTimerRef.current = null;
+        }
+    };
+
+    const scheduleDedupHide = () => {
+        if (dedupHideTimerRef.current) return;
         dedupHideTimerRef.current = setTimeout(() => {
             dedupHideTimerRef.current = null;
-            setStickyDedupProgress(null);
-        }, Math.max(0, remaining));
-    }, [dedupTask.progress, dedupTask.status, dedupTask.startedAt, stickyDedupProgress]);
+            dedupBaseRef.current = null;
+            dedupActiveRef.current = false;
+            displayedStepRef.current = null;
+            setDisplayDedupProgress(null);
+        }, DEDUP_END_PAUSE_MS);
+    };
 
-    useEffect(() => () => {
-        if (dedupHideTimerRef.current) clearTimeout(dedupHideTimerRef.current);
+    const startDedupStepTicker = () => {
+        if (dedupStepTimerRef.current || dedupStepQueueRef.current.length === 0) return;
+        dedupStepTimerRef.current = setTimeout(() => {
+            dedupStepTimerRef.current = null;
+            const step = dedupStepQueueRef.current.shift();
+            if (step && dedupBaseRef.current) {
+                displayedStepRef.current = step;
+                setDisplayDedupProgress({ ...dedupBaseRef.current, step });
+            }
+            if (dedupStepQueueRef.current.length > 0) {
+                startDedupStepTicker();
+            } else if (!dedupActiveRef.current) {
+                scheduleDedupHide();
+            }
+        }, DEDUP_STEP_MIN_MS);
+    };
+
+    useLayoutEffect(() => {
+        if (dedupTask.progress) {
+            const p = dedupTask.progress;
+            if (dedupStartedAtRef.current !== dedupTask.startedAt) {
+                // 新一轮任务（或从扫描进入删除阶段）：重置播放队列和进度框
+                dedupStartedAtRef.current = dedupTask.startedAt;
+                clearDedupTimers();
+                dedupStepQueueRef.current = [];
+                dedupBaseRef.current = null;
+                dedupActiveRef.current = false;
+                displayedStepRef.current = null;
+                setDisplayDedupProgress(null);
+            }
+            dedupBaseRef.current = p;
+            dedupActiveRef.current = true;
+            if (p.step && p.step !== displayedStepRef.current && p.step !== dedupStepQueueRef.current[dedupStepQueueRef.current.length - 1]) {
+                if (dedupStepQueueRef.current.length >= DEDUP_MAX_QUEUED_STEPS) {
+                    dedupStepQueueRef.current[dedupStepQueueRef.current.length - 1] = p.step;
+                } else {
+                    dedupStepQueueRef.current.push(p.step);
+                }
+            }
+            if (!displayedStepRef.current) {
+                // 第一帧立即显示，不等 0.3 秒
+                displayedStepRef.current = p.step || '';
+                setDisplayDedupProgress(p);
+            }
+            startDedupStepTicker();
+        } else {
+            // 任务结束：不再收新步骤，等队列里的阶段播完再收起
+            dedupActiveRef.current = false;
+            if (dedupStepQueueRef.current.length === 0) {
+                scheduleDedupHide();
+            }
+        }
+    }, [dedupTask.progress, dedupTask.status, dedupTask.startedAt]);
+
+    useLayoutEffect(() => () => {
+        clearDedupTimers();
     }, []);
 
     useEffect(() => {
