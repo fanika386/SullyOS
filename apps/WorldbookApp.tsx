@@ -869,6 +869,20 @@ const WorldbookApp: React.FC = () => {
                                                         </div>
                                                     )}
 
+                                                    {(review.functionCategory || review.reason || review.benefit) && (
+                                                        <div className="mt-3 grid gap-1.5 text-[11px] leading-relaxed text-slate-600">
+                                                            {review.functionCategory && (
+                                                                <p><span className="font-bold text-slate-700">归类：</span>{review.functionCategory}</p>
+                                                            )}
+                                                            {review.reason && (
+                                                                <p><span className="font-bold text-slate-700">为什么改：</span>{review.reason}</p>
+                                                            )}
+                                                            {review.benefit && (
+                                                                <p><span className="font-bold text-slate-700">好处：</span>{review.benefit}</p>
+                                                            )}
+                                                        </div>
+                                                    )}
+
                                                     {review.keepAdvice && (
                                                         <div className="mt-2 text-[11px] leading-relaxed text-slate-500">
                                                             <span className="font-bold text-slate-700">保留建议：</span>{review.keepAdvice}

@@ -122,6 +122,9 @@ export interface WorldbookDuplicateAiReview {
     relation: WorldbookDuplicateAiRelation;
     functionalOverlap: number;
     verdict: string;
+    functionCategory?: string;
+    reason?: string;
+    benefit?: string;
     mergeAdvice: string[];
     keepAdvice?: string;
     needsHumanReview: string[];
@@ -783,7 +786,8 @@ const WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT = [
     '你是世界书去重小助手，只判断候选世界书是不是在说同一件事。',
     '请用通俗、短句、直接的中文，像给普通用户写提示；不要写学术分析，不要堆专业术语。',
     '必须使用输入里的真实书名，不要用 Book A、Book B、A 书、B 书代替。',
-    '把建议写成用户看得懂的操作：合并哪部分、删哪句、保留哪条、标题或关键词怎么改。',
+    '目标是把世界书整理成以后方便挂给不同角色的条目：通用设定抽出来，角色私有内容分开留。',
+    '把建议写成用户看得懂的操作：先按功能分类，再说明为什么建议这样改，以及这样改有什么好处。',
     '不要删除或自动改写用户内容，只输出给人工确认的简单建议。',
     '必须只返回 JSON，不要 Markdown，不要解释。',
 ].join('\n');
@@ -920,6 +924,8 @@ const buildWorldbookDedupeAiPrompt = (
     return JSON.stringify({
         task: 'review_worldbook_duplicate_groups',
         groupRule: '每个 duplicateGroups 项可能包含 2 本或更多本世界书；请按一组一起判断，不要拆成 Book A / Book B。',
+        categoryRule: '请按功能分类，例如：通用世界观、角色专属设定、地点/组织设定、时间线/事件、触发关键词、写作规则/禁忌、其它。',
+        cleanupGoal: '建议的目的不是炫技整理，而是让这些世界书以后无论挂给哪个角色都更方便、更清楚、更少重复。',
         duplicateGroups,
         outputSchema: {
             reviews: [{
@@ -928,6 +934,9 @@ const buildWorldbookDedupeAiPrompt = (
                 relation: 'duplicate | overlap | complementary | conflict | unrelated',
                 functionalOverlap: '0-100，粗略判断这一组有多像',
                 verdict: '一句通俗中文结论，必须写真实书名，例如：「月城设定」和「月城历史」主要在说同一件事，可以合在一起。',
+                functionCategory: '这组主要属于什么功能，例如：通用世界观 / 角色专属设定 / 地点或组织 / 时间线事件 / 触发关键词 / 写作规则',
+                reason: '为什么建议这样改，用一句简单中文说明问题在哪里',
+                benefit: '这样改有什么好处，重点说明以后挂给不同角色会更方便、更清楚或更省提示词',
                 mergeAdvice: ['短句建议：用真实书名说明怎么合并、删哪句、保留哪条、标题或关键词怎么改'],
                 keepAdvice: '可选：用简单话说明哪条更适合保留',
                 needsHumanReview: ['还拿不准、需要用户自己确认的小问题'],
@@ -937,6 +946,7 @@ const buildWorldbookDedupeAiPrompt = (
             '这是粗略扫重和修复建议，不是最终判定。',
             '不用写学术分析，也不要使用“功能覆盖”“语义一致性”等专业说法。',
             '不要说 Book A、Book B、Book C；用户看多本世界书时分不清，请直接说书名。',
+            '每组都要写清楚：按功能分类、为什么建议这样改、这样改有什么好处。',
             '优先输出短句，每条建议尽量 30 个中文字符以内。',
         ],
     }, null, 2);
@@ -973,6 +983,8 @@ const parseWorldbookDedupeAiReviews = (
         if (!context) return [];
         const cleanText = (value: string): string => replaceAiBookAliasesWithTitles(value, context);
         const verdict = cleanText(makeTextExcerpt(String(item?.verdict || item?.summary || item?.reason || '').trim(), 240));
+        const reason = cleanText(makeTextExcerpt(String(item?.reason || item?.why || '').trim(), 180));
+        const benefit = cleanText(makeTextExcerpt(String(item?.benefit || item?.value || item?.outcome || '').trim(), 180));
         return [{
             findingId,
             bookIds: context.bookRefs.map(book => book.id),
@@ -980,6 +992,9 @@ const parseWorldbookDedupeAiReviews = (
             relation: normalizedAiRelation(item?.relation || item?.type),
             functionalOverlap: Math.round(clamp(item?.functionalOverlap ?? item?.overlap ?? item?.score, 0, 100, 0)),
             verdict: verdict || 'AI 认为这组候选需要人工复核。',
+            functionCategory: cleanText(String(item?.functionCategory || item?.category || '').trim()) || undefined,
+            reason: reason || undefined,
+            benefit: benefit || undefined,
             mergeAdvice: asReviewTextArray(item?.mergeAdvice || item?.suggestions || item?.advice).map(cleanText),
             keepAdvice: cleanText(String(item?.keepAdvice || item?.keep || '').trim()) || undefined,
             needsHumanReview: asReviewTextArray(item?.needsHumanReview || item?.questions || item?.risks).map(cleanText),

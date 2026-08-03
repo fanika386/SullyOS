@@ -444,6 +444,9 @@ describe('worldbook duplicate AI review', () => {
                                     relation: 'duplicate',
                                     functionalOverlap: 84,
                                     verdict: 'Book A、Book B 和 Book C 都在讲星图维护。',
+                                    functionCategory: '组织与职责',
+                                    reason: '现在三条都在讲同一件事，挂给角色时容易重复塞设定。',
+                                    benefit: '合成后 Book C 可以当补充小节，以后挂给不同角色更清楚，也更省提示词。',
                                     mergeAdvice: ['把 Book A 的组织、Book B 的职位、Book C 的档案内容合成一条。'],
                                     keepAdvice: '用 Book C 当补充小节。',
                                     needsHumanReview: ['确认 Book B 是否需要单独保留职位设定。'],
@@ -460,8 +463,16 @@ describe('worldbook duplicate AI review', () => {
         expect(prompt.duplicateGroups[0].findingId).toBe('group:guild-a__guild-b__guild-c');
         expect(prompt.duplicateGroups[0].books.map((item: any) => item.title)).toEqual(['观星公会', '星图管理员', '星图档案']);
         expect(prompt.candidates).toBeUndefined();
+        expect(requestedBody.messages[0].content).toContain('方便挂给不同角色');
+        expect(requestedBody.messages[1].content).toContain('按功能分类');
+        expect(requestedBody.messages[1].content).toContain('为什么建议这样改');
+        expect(requestedBody.messages[1].content).toContain('这样改有什么好处');
         expect(result.reviews).toHaveLength(1);
         expect(result.reviews[0].bookTitles).toEqual(['观星公会', '星图管理员', '星图档案']);
+        expect(result.reviews[0].functionCategory).toBe('组织与职责');
+        expect(result.reviews[0].reason).toContain('挂给角色');
+        expect(result.reviews[0].benefit).toContain('「星图档案」');
+        expect(result.reviews[0].benefit).toContain('不同角色');
         expect(JSON.stringify(result.reviews[0])).not.toContain('Book C');
         expect(result.reviews[0].verdict).toContain('「星图档案」');
         expect(result.reviews[0].mergeAdvice[0]).toContain('「观星公会」');
