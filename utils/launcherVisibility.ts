@@ -27,3 +27,9 @@ export const shouldShowLauncherScheduleWidget = (): boolean =>
 
 export const shouldShowLauncherAppearanceEntrypoints = (): boolean =>
     isAppVisible(AppID.Appearance);
+
+export const shouldShowLauncherDateEntrypoints = (): boolean =>
+    isAppVisible(AppID.Date);
+
+export const shouldShowLauncherRoomEntrypoints = (): boolean =>
+    isAppVisible(AppID.Room);

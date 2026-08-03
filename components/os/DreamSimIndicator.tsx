@@ -3,13 +3,15 @@ import { useOS } from '../../context/OSContext';
 import { AppID } from '../../types';
 import { useDreamSim, dreamSimStore } from '../../utils/dreamSimStore';
 import { MoonStars, CaretRight } from '@phosphor-icons/react';
+import { shouldShowLauncherRoomEntrypoints } from '../../utils/launcherVisibility';
 
 // 全局「梦境」生成指示条 —— 挂在 PhoneShell，随处可见，点击深链回到那场梦。
 const DreamSimIndicator: React.FC = () => {
     const sim = useDreamSim();
     const { openApp } = useOS();
+    const showRoomEntrypoints = shouldShowLauncherRoomEntrypoints();
 
-    if (sim.status !== 'loading' && sim.status !== 'ready') return null;
+    if (!showRoomEntrypoints || (sim.status !== 'loading' && sim.status !== 'ready')) return null;
 
     const onTap = () => {
         dreamSimStore.requestOpen();

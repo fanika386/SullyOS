@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
     normalizeLauncherPinwheelOrder,
     shouldShowLauncherAppearanceEntrypoints,
+    shouldShowLauncherDateEntrypoints,
+    shouldShowLauncherRoomEntrypoints,
     shouldShowLauncherScheduleWidget,
 } from './launcherVisibility';
 
@@ -17,5 +19,13 @@ describe('launcher visibility helpers', () => {
 
     it('does not expose the schedule widget when schedule is pruned', () => {
         expect(shouldShowLauncherScheduleWidget()).toBe(false);
+    });
+
+    it('does not expose date entrypoints when date is pruned', () => {
+        expect(shouldShowLauncherDateEntrypoints()).toBe(false);
+    });
+
+    it('does not expose room entrypoints when room is pruned', () => {
+        expect(shouldShowLauncherRoomEntrypoints()).toBe(false);
     });
 });

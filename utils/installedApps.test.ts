@@ -20,6 +20,7 @@ describe('installed desktop apps', () => {
             AppID.CharCreatorDev,
             AppID.Bank,
             AppID.Date,
+            AppID.Room,
         ];
 
         for (const appId of prunedIds) {

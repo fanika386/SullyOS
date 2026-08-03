@@ -18,6 +18,7 @@ import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../../utils/
 import { SCHEMES, hsl, schemePreview, type TgStyle } from './gotchiScheme';
 import { getLocalDailySchedule } from '../../utils/dailySchedule';
 import { useLocalDateKey } from '../../hooks/useLocalDateKey';
+import { shouldShowLauncherDateEntrypoints, shouldShowLauncherRoomEntrypoints } from '../../utils/launcherVisibility';
 
 // ===== 电子宠物主题（tamagotchi skin）=====
 // 桌面不再是「放图标的手机」，而是一台华丽丽的二次元养成机：屏幕主体是角色
@@ -1119,6 +1120,8 @@ const TamagotchiHome: React.FC = () => {
         () => INSTALLED_APPS.filter(a => a.id !== AppID.CharCreatorDev || devDebugVisible),
         [devDebugVisible]
     );
+    const showDateEntrypoints = shouldShowLauncherDateEntrypoints();
+    const showRoomEntrypoints = shouldShowLauncherRoomEntrypoints();
 
     return (
         <div className="h-full w-full relative z-10 overflow-hidden select-none"
@@ -1270,8 +1273,9 @@ const TamagotchiHome: React.FC = () => {
                     <HangingSign text={signText} onTap={() => setScrollOpen(true)} />
                     {scrollOpen && <DayScroll slots={scrollSlots} onPeek={runTheater} onClose={() => setScrollOpen(false)} />}
 
-                    {/* 右侧世界之门：家园 / 像素家园 / 梦境 */}
-                    <WorldPortals onHome={openHomeland} onPixel={openPixelHome} onDream={openDream} />
+                    {showRoomEntrypoints && (
+                        <WorldPortals onHome={openHomeland} onPixel={openPixelHome} onDream={openDream} />
+                    )}
 
                     {/* 地板上的 ta 的手机（未读会亮；点开小弹窗，一键去回） */}
                     <FloorPhone unread={charUnread} open={phoneOpen} msgs={stat.recent}
@@ -1296,7 +1300,9 @@ const TamagotchiHome: React.FC = () => {
                             style={{ background: PAL.card, border: `1.5px solid ${PAL.frameSoft}`, boxShadow: '0 8px 22px var(--tg-glow35)' }}>
                             <div className="absolute inset-[4px] rounded-[1.45rem] pointer-events-none" style={{ border: '1px solid var(--tg-frame-a22)' }} />
                             <Sparkles items={[[7, 14, 7, PAL.frame, 0.6], [93, 18, 7, PAL.frame, 0.55], [50, -8, 8, PAL.frame, 0.8, true]]} />
-                            <DockBtn glyph={DOCK_GLYPHS.heart} cn="约会" en="DATE" onClick={() => openApp(AppID.Date)} />
+                            {showDateEntrypoints && (
+                                <DockBtn glyph={DOCK_GLYPHS.heart} cn="约会" en="DATE" onClick={() => openApp(AppID.Date)} />
+                            )}
                             <DockBtn glyph={DOCK_GLYPHS.neural} cn="神经链接" en="LINK" onClick={() => openApp(AppID.Character)} />
                             {/* 中央星徽：点开全部应用抽屉 */}
                             <button onClick={() => setDrawerOpen(true)} className="relative flex flex-col items-center gap-1 -mt-8 active:scale-95 transition-transform">
