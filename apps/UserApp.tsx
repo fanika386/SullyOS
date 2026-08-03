@@ -3,7 +3,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
-import { DEFAULT_USER_PROFILE_ID, USER_PROFILE_BINDING_REMINDER } from '../utils/userProfiles';
+import {
+    DEFAULT_USER_PROFILE_ID,
+    USER_PROFILE_BINDING_REMINDER,
+    USER_PROFILE_PERSONA_PROMPT_LABEL,
+    USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER,
+} from '../utils/userProfiles';
 
 const UserApp: React.FC = () => {
     const {
@@ -205,12 +210,12 @@ const UserApp: React.FC = () => {
                             className="w-full h-36 bg-slate-50 focus:bg-white border border-slate-100 focus:border-primary/30 rounded-2xl px-4 py-3 text-sm text-slate-700 leading-relaxed resize-none outline-none transition-all placeholder:text-slate-300"
                             placeholder="描述你自己..."
                         />
-                        <label className="text-[11px] font-bold text-slate-400 tracking-widest block mt-4 mb-1 pl-1">补充身份提示词</label>
+                        <label className="text-[11px] font-bold text-slate-400 tracking-widest block mt-4 mb-1 pl-1">{USER_PROFILE_PERSONA_PROMPT_LABEL}</label>
                         <textarea
                             value={selectedProfile.personaPrompt || ''}
                             onChange={(e) => updateSelectedProfile({ personaPrompt: e.target.value })}
                             className="w-full h-28 bg-slate-50 focus:bg-white border border-slate-100 focus:border-primary/30 rounded-2xl px-4 py-3 text-sm text-slate-700 leading-relaxed resize-none outline-none transition-all placeholder:text-slate-300"
-                            placeholder="例如：这次以旁白、玩家、原创主角或另一个身份和角色互动..."
+                            placeholder={USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER}
                         />
                     </div>
 

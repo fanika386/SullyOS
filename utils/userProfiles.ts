@@ -5,6 +5,11 @@ export const DEFAULT_USER_PROFILE_ID = 'me';
 export const USER_PROFILE_BINDING_REMINDER =
   '建议把角色绑定当成长期设定：选好后尽量不要频繁切换。频繁改绑可能让旧聊天、记忆、手账、主动消息或其它功能里的身份线索变得不一致。';
 
+export const USER_PROFILE_PERSONA_PROMPT_LABEL = '给 AI 的补充说明';
+
+export const USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER =
+  '可以不填。比如：请把我当成林夏；我们已经认识很久；说话更亲近一点。';
+
 const generatedProfileId = (index: number) => `persona_import_${index + 1}`;
 
 export const withUserProfileId = (

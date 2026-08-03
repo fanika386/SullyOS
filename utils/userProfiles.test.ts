@@ -5,6 +5,8 @@ import {
   DEFAULT_USER_PROFILE_ID,
   resolveUserProfileForCharacter,
   USER_PROFILE_BINDING_REMINDER,
+  USER_PROFILE_PERSONA_PROMPT_LABEL,
+  USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER,
 } from './userProfiles';
 
 const defaultProfile: UserProfile = {
@@ -74,5 +76,13 @@ describe('USER_PROFILE_BINDING_REMINDER', () => {
   it('warns users to avoid frequent persona rebinding', () => {
     expect(USER_PROFILE_BINDING_REMINDER).toContain('尽量不要频繁切换');
     expect(USER_PROFILE_BINDING_REMINDER).toContain('其它功能');
+  });
+});
+
+describe('persona prompt field copy', () => {
+  it('uses simple wording that tells users the field is optional and AI-facing', () => {
+    expect(USER_PROFILE_PERSONA_PROMPT_LABEL).toBe('给 AI 的补充说明');
+    expect(USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER).toContain('可以不填');
+    expect(USER_PROFILE_PERSONA_PROMPT_PLACEHOLDER).toContain('请把我当成');
   });
 });
