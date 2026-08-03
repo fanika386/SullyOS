@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { UserProfile } from '../types';
-import { buildUserProfileBackupFields, DEFAULT_USER_PROFILE_ID, resolveUserProfileForCharacter } from './userProfiles';
+import {
+  buildUserProfileBackupFields,
+  DEFAULT_USER_PROFILE_ID,
+  resolveUserProfileForCharacter,
+  USER_PROFILE_BINDING_REMINDER,
+} from './userProfiles';
 
 const defaultProfile: UserProfile = {
   id: DEFAULT_USER_PROFILE_ID,
@@ -62,5 +67,12 @@ describe('buildUserProfileBackupFields', () => {
       'persona_alt',
     ]);
     expect(fields.characterUserProfileBindings).toEqual({ c1: 'persona_alt' });
+  });
+});
+
+describe('USER_PROFILE_BINDING_REMINDER', () => {
+  it('warns users to avoid frequent persona rebinding', () => {
+    expect(USER_PROFILE_BINDING_REMINDER).toContain('尽量不要频繁切换');
+    expect(USER_PROFILE_BINDING_REMINDER).toContain('其它功能');
   });
 });

@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
-import { DEFAULT_USER_PROFILE_ID } from '../utils/userProfiles';
+import { DEFAULT_USER_PROFILE_ID, USER_PROFILE_BINDING_REMINDER } from '../utils/userProfiles';
 
 const UserApp: React.FC = () => {
     const {
@@ -223,6 +223,9 @@ const UserApp: React.FC = () => {
                             </span>
                             <h2 className="text-sm font-bold text-slate-700">角色绑定</h2>
                         </div>
+                        <p className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+                            {USER_PROFILE_BINDING_REMINDER}
+                        </p>
                         <div className="space-y-2">
                             {characters.map(char => (
                                 <div key={char.id} className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 px-3 py-2">
