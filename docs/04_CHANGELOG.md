@@ -24,6 +24,46 @@
 后续注意：
 ```
 
+## 2026-08-03 - 世界书去重 AI 深检
+
+本次任务：
+
+在已完成的世界书本地去重检测上增加可选 AI 语义深检，并允许用户在设置里配置去重专用模型。
+
+修改内容：
+
+- 在 `utils/worldbook.ts` 新增 AI 深检请求构造、OpenAI 兼容接口调用和结构化 JSON 解析逻辑；只把本地检测出的候选重复对发给模型。
+- 在 `apps/WorldbookApp.tsx` 增加“AI 深检”按钮和语义结论展示，区分功能重复、部分重叠、互补、冲突和无关。
+- 在 `apps/Settings.tsx` 的 API 配置区域增加“世界书去重 AI”可选配置，可跟随主聊天 API，也可从已有预设选择便宜模型。
+- 在 `utils/worldbook.test.ts` 增加 AI 深检单测，覆盖候选裁剪、低温度请求、JSON 解析和配置缺失报错。
+
+新增模块：
+
+- 无。
+
+影响模块：
+
+- `apps/WorldbookApp.tsx`
+- `apps/Settings.tsx`
+- `utils/worldbook.ts`
+- `utils/worldbook.test.ts`
+
+是否修改业务逻辑：
+
+- 是。新增世界书去重的可选 AI 深检路径；去重专用配置以运行时扩展字段保存在现有 `apiConfig` 中，不自动删除、合并或改写世界书内容，不修改 IndexedDB schema。
+
+是否更新 `01_PROJECT_MAP.md`：
+
+- 否。本次没有新增、移动或删除模块。
+
+是否更新 `02_ARCHITECTURE.md`：
+
+- 否。本次只扩展世界书 App 内部功能和现有 API 配置字段，未改变总体架构。
+
+后续注意：
+
+- AI 深检依赖用户自己的 OpenAI 兼容接口；未配置去重专用 API 时会跟随主聊天 API，调用时固定低温度并只发送本地候选对。
+
 ## 2026-08-03 - 世界书去重检测
 
 本次任务：

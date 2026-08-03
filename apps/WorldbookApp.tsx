@@ -6,13 +6,14 @@ import { DiamondsFour, BookOpen, DownloadSimple, UploadSimple, WarningCircle, Ma
 import {
     analyzeWorldbookDuplicates,
     parseStandardWorldbook,
+    reviewWorldbookDuplicatesWithAI,
     serializeStandardWorldbook,
     splitWorldbookKeywords,
     WORLDBOOK_POSITION_DESCRIPTIONS,
     WORLDBOOK_POSITION_LABELS,
     WORLDBOOK_ROLE_LABELS,
 } from '../utils/worldbook';
-import type { WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
+import type { WorldbookDuplicateAiRelation, WorldbookDuplicateAiResult, WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { shareOrDownloadFile } from '../utils/shareExport';
 
@@ -30,8 +31,35 @@ const DEDUPE_SEVERITY_STYLES: Record<WorldbookDuplicateSeverity, string> = {
     low: 'bg-sky-50 text-sky-600 border-sky-100',
 };
 
+const DEDUPE_AI_RELATION_LABELS: Record<WorldbookDuplicateAiRelation, string> = {
+    duplicate: '功能重复',
+    overlap: '部分重叠',
+    complementary: '互补',
+    conflict: '有冲突',
+    unrelated: '无关',
+};
+
+const DEDUPE_AI_RELATION_STYLES: Record<WorldbookDuplicateAiRelation, string> = {
+    duplicate: 'bg-red-50 text-red-600 border-red-100',
+    overlap: 'bg-amber-50 text-amber-600 border-amber-100',
+    complementary: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    conflict: 'bg-violet-50 text-violet-600 border-violet-100',
+    unrelated: 'bg-slate-50 text-slate-500 border-slate-100',
+};
+
+type WorldbookDedupeApiDraft = {
+    enabled?: boolean;
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+};
+
+type ApiConfigWithWorldbookDedupe<T> = T & {
+    worldbookDedupeApi?: WorldbookDedupeApiDraft;
+};
+
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
+    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -42,6 +70,8 @@ const WorldbookApp: React.FC = () => {
     const [dedupeMode, setDedupeMode] = useState(false);
     const [selectedDedupeIds, setSelectedDedupeIds] = useState<Set<string>>(() => new Set());
     const [dedupeAnalysis, setDedupeAnalysis] = useState<WorldbookDuplicateAnalysis | null>(null);
+    const [dedupeAiResult, setDedupeAiResult] = useState<WorldbookDuplicateAiResult | null>(null);
+    const [isDedupeAiReviewing, setIsDedupeAiReviewing] = useState(false);
 
     const PAGE_SIZE = 12;
 
@@ -96,6 +126,11 @@ const WorldbookApp: React.FC = () => {
         () => new Map(worldbooks.map(book => [book.id, book.title])),
         [worldbooks],
     );
+    const dedupeAiModelLabel = useMemo(() => {
+        const dedicated = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
+        if (dedicated?.enabled) return dedicated.model?.trim() || apiConfig.model || '未配置模型';
+        return apiConfig.model || '未配置模型';
+    }, [apiConfig]);
 
     // 编辑页「已有分组」建议列表：随输入实时过滤。
     // 不能用原生 datalist —— 分组一多，移动端 WebView 会把候选渲染成撑爆屏幕、无法滚动的巨型下拉。
@@ -279,6 +314,7 @@ const WorldbookApp: React.FC = () => {
             if (!next) {
                 setSelectedDedupeIds(new Set());
                 setDedupeAnalysis(null);
+                setDedupeAiResult(null);
             }
             return next;
         });
@@ -292,6 +328,7 @@ const WorldbookApp: React.FC = () => {
             return next;
         });
         setDedupeAnalysis(null);
+        setDedupeAiResult(null);
     };
 
     const toggleDedupeCategory = (event: React.MouseEvent, books: Worldbook[]) => {
@@ -306,16 +343,19 @@ const WorldbookApp: React.FC = () => {
             return next;
         });
         setDedupeAnalysis(null);
+        setDedupeAiResult(null);
     };
 
     const selectAllForDedupe = () => {
         setSelectedDedupeIds(new Set(worldbooks.map(book => book.id)));
         setDedupeAnalysis(null);
+        setDedupeAiResult(null);
     };
 
     const clearDedupeSelection = () => {
         setSelectedDedupeIds(new Set());
         setDedupeAnalysis(null);
+        setDedupeAiResult(null);
     };
 
     const runDedupeAnalysis = () => {
@@ -325,10 +365,57 @@ const WorldbookApp: React.FC = () => {
         }
         const analysis = analyzeWorldbookDuplicates(selectedDedupeBooks);
         setDedupeAnalysis(analysis);
+        setDedupeAiResult(null);
         if (analysis.duplicatePairs > 0) {
             addToast(`发现 ${analysis.duplicatePairs} 组疑似重复`, 'info');
         } else {
             addToast('未发现明显重复', 'success');
+        }
+    };
+
+    const resolveDedupeAiApi = () => {
+        const dedicated = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
+        if (dedicated?.enabled) {
+            return {
+                baseUrl: dedicated.baseUrl?.trim() || apiConfig.baseUrl,
+                apiKey: dedicated.apiKey?.trim() || apiConfig.apiKey,
+                model: dedicated.model?.trim() || apiConfig.model,
+                temperature: 0.1,
+            };
+        }
+        return {
+            baseUrl: apiConfig.baseUrl,
+            apiKey: apiConfig.apiKey,
+            model: apiConfig.model,
+            temperature: 0.1,
+        };
+    };
+
+    const runDedupeAiReview = async () => {
+        if (isDedupeAiReviewing) return;
+        if (selectedDedupeBooks.length < 2) {
+            addToast('至少选择 2 本世界书才能 AI 深检', 'error');
+            return;
+        }
+        const currentAnalysis = dedupeAnalysis || analyzeWorldbookDuplicates(selectedDedupeBooks);
+        if (!dedupeAnalysis) setDedupeAnalysis(currentAnalysis);
+        if (currentAnalysis.findings.length === 0) {
+            addToast('本地检测没有候选重复项，暂时不需要 AI 深检', 'info');
+            return;
+        }
+        setIsDedupeAiReviewing(true);
+        try {
+            const result = await reviewWorldbookDuplicatesWithAI({
+                api: resolveDedupeAiApi(),
+                books: selectedDedupeBooks,
+                analysis: currentAnalysis,
+            });
+            setDedupeAiResult(result);
+            addToast(`AI 深检完成：${result.reviews.length} 组结论`, 'success');
+        } catch (error: any) {
+            addToast(error?.message || 'AI 深检失败', 'error');
+        } finally {
+            setIsDedupeAiReviewing(false);
         }
     };
 
@@ -718,6 +805,74 @@ const WorldbookApp: React.FC = () => {
                                         <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.highestDuplicateRate}%</div>
                                     </div>
                                 </div>
+
+                                {dedupeAnalysis.findings.length > 0 && (
+                                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="text-xs font-black text-emerald-700">AI 语义深检</div>
+                                                <div className="mt-0.5 text-[10px] text-emerald-700/70 truncate">模型：{dedupeAiModelLabel}</div>
+                                            </div>
+                                            <button
+                                                onClick={runDedupeAiReview}
+                                                disabled={isDedupeAiReviewing}
+                                                className="shrink-0 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-white shadow-sm shadow-emerald-200 active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
+                                            >
+                                                {isDedupeAiReviewing ? '深检中…' : 'AI 深检'}
+                                            </button>
+                                        </div>
+                                        <p className="mt-2 text-[10px] leading-relaxed text-emerald-700/70">
+                                            只发送本地检测出的候选对，用来判断两本是否承担相同设定功能。
+                                        </p>
+                                    </div>
+                                )}
+
+                                {dedupeAiResult && dedupeAiResult.reviews.length > 0 && (
+                                    <div className="space-y-3">
+                                        {dedupeAiResult.reviews.map(review => {
+                                            const finding = dedupeAnalysis.findings.find(item => item.id === review.findingId);
+                                            return (
+                                                <div key={review.findingId} className="rounded-2xl border border-emerald-100 bg-white/90 p-4 shadow-sm">
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <div className="text-sm font-black text-slate-800 truncate">
+                                                                {finding ? `${finding.bookA.title} ↔ ${finding.bookB.title}` : review.findingId}
+                                                            </div>
+                                                            <div className="mt-1 text-[11px] leading-relaxed text-slate-600">{review.verdict}</div>
+                                                        </div>
+                                                        <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black ${DEDUPE_AI_RELATION_STYLES[review.relation]}`}>
+                                                            {review.functionalOverlap}% · {DEDUPE_AI_RELATION_LABELS[review.relation]}
+                                                        </div>
+                                                    </div>
+
+                                                    {review.mergeAdvice.length > 0 && (
+                                                        <div className="mt-3 rounded-xl bg-emerald-50/80 border border-emerald-100 px-3 py-2 text-[11px] leading-relaxed text-emerald-700">
+                                                            {review.mergeAdvice.map(advice => (
+                                                                <p key={advice} className="mb-1 last:mb-0">{advice}</p>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {review.keepAdvice && (
+                                                        <div className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                                                            <span className="font-bold text-slate-700">保留建议：</span>{review.keepAdvice}
+                                                        </div>
+                                                    )}
+
+                                                    {review.needsHumanReview.length > 0 && (
+                                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                                            {review.needsHumanReview.map(item => (
+                                                                <span key={item} className="rounded-full bg-slate-50 border border-slate-100 px-2 py-1 text-[10px] text-slate-500">
+                                                                    {item}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
 
                                 {dedupeAnalysis.findings.length === 0 ? (
                                     <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-relaxed text-emerald-700">

@@ -5,6 +5,7 @@ import {
     injectWorldbookDepthEntries,
     isWorldbookEntryActive,
     parseStandardWorldbook,
+    reviewWorldbookDuplicatesWithAI,
     resolveWorldbookEntries,
     serializeStandardWorldbook,
     splitWorldbookSections,
@@ -244,5 +245,88 @@ describe('worldbook duplicate analysis', () => {
         expect(analysis.highestDuplicateRate).toBeLessThan(35);
         expect(analysis.findings).toEqual([]);
         expect(analysis.cleanBookIds.sort()).toEqual(['a', 'b', 'c']);
+    });
+});
+
+describe('worldbook duplicate AI review', () => {
+    it('sends only locally flagged duplicate candidates to a cheap review model', async () => {
+        const books = [
+            book({
+                id: 'guild-a',
+                title: '观星公会',
+                key: ['观星公会', '星图'],
+                content: '观星公会负责维护星图。成员会记录流星雨、潮汐异常和月城航线。',
+            }),
+            book({
+                id: 'guild-b',
+                title: '星图管理员',
+                key: ['星图', '管理员'],
+                content: '星图管理员隶属于观星公会，主要工作是校准月城航线，并把潮汐异常写入档案。',
+            }),
+            book({
+                id: 'bakery',
+                title: '面包店',
+                key: ['面包'],
+                content: '港口面包店每天清晨开门，招牌是蜂蜜牛角包。',
+            }),
+        ];
+        const analysis = analyzeWorldbookDuplicates(books);
+        let requestedUrl = '';
+        let requestedBody: any = null;
+
+        const result = await reviewWorldbookDuplicatesWithAI({
+            api: { baseUrl: 'https://api.example.test/v1', apiKey: 'sk-test', model: 'cheap-reviewer' },
+            books,
+            analysis,
+            fetchImpl: async (url, init) => {
+                requestedUrl = String(url);
+                requestedBody = JSON.parse(String(init?.body));
+                return new Response(JSON.stringify({
+                    choices: [{
+                        message: {
+                            content: JSON.stringify({
+                                reviews: [{
+                                    findingId: 'guild-a__guild-b',
+                                    relation: 'duplicate',
+                                    functionalOverlap: 88,
+                                    verdict: '两条都在解释观星公会如何维护星图和月城航线。',
+                                    mergeAdvice: ['合并共同职责，把独有称谓作为小节保留。'],
+                                    keepAdvice: '保留信息更完整的一条作为主条目。',
+                                    needsHumanReview: ['确认星图管理员是否是职位还是组织。'],
+                                }],
+                            }),
+                        },
+                    }],
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            },
+        });
+
+        expect(requestedUrl).toBe('https://api.example.test/v1/chat/completions');
+        expect(requestedBody.model).toBe('cheap-reviewer');
+        expect(requestedBody.temperature).toBe(0.1);
+        expect(requestedBody.stream).toBe(false);
+        expect(requestedBody.messages[1].content).toContain('guild-a__guild-b');
+        expect(requestedBody.messages[1].content).toContain('观星公会');
+        expect(requestedBody.messages[1].content).not.toContain('蜂蜜牛角包');
+
+        expect(result.model).toBe('cheap-reviewer');
+        expect(result.reviews).toHaveLength(1);
+        expect(result.reviews[0]).toMatchObject({
+            findingId: 'guild-a__guild-b',
+            relation: 'duplicate',
+            functionalOverlap: 88,
+            verdict: '两条都在解释观星公会如何维护星图和月城航线。',
+        });
+    });
+
+    it('rejects incomplete AI review API configuration before making a request', async () => {
+        await expect(reviewWorldbookDuplicatesWithAI({
+            api: { baseUrl: '', apiKey: 'sk-test', model: 'cheap-reviewer' },
+            books: [],
+            analysis: analyzeWorldbookDuplicates([]),
+            fetchImpl: async () => {
+                throw new Error('fetch should not be called');
+            },
+        })).rejects.toThrow('请先配置世界书去重 AI');
     });
 });

@@ -5,6 +5,7 @@ import type {
     WorldbookPosition,
     WorldbookSelectiveLogic,
 } from '../types';
+import { extractContent, extractJson, safeResponseJson } from './safeApi';
 
 export type WorldbookLike = Worldbook | MountedWorldbook;
 
@@ -70,6 +71,40 @@ export interface WorldbookDuplicateOptions {
     /** Minimum duplicate rate, from 0 to 100, required for a pair to appear in findings. */
     minDuplicateRate?: number;
     maxFindings?: number;
+}
+
+export type WorldbookDuplicateAiRelation = 'duplicate' | 'overlap' | 'complementary' | 'conflict' | 'unrelated';
+
+export interface WorldbookDedupeAiApiConfig {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    temperature?: number;
+}
+
+export interface WorldbookDuplicateAiReview {
+    findingId: string;
+    relation: WorldbookDuplicateAiRelation;
+    functionalOverlap: number;
+    verdict: string;
+    mergeAdvice: string[];
+    keepAdvice?: string;
+    needsHumanReview: string[];
+}
+
+export interface WorldbookDuplicateAiResult {
+    model: string;
+    reviewedAt: number;
+    reviews: WorldbookDuplicateAiReview[];
+    rawText: string;
+}
+
+export interface ReviewWorldbookDuplicatesWithAIInput {
+    api: WorldbookDedupeAiApiConfig;
+    books: WorldbookLike[];
+    analysis: WorldbookDuplicateAnalysis;
+    maxPairs?: number;
+    fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
 export const WORLDBOOK_POSITION_LABELS: Record<WorldbookPosition, string> = {
@@ -647,6 +682,172 @@ export const analyzeWorldbookDuplicates = (
         highestDuplicateRate,
         findings: sortedFindings,
         cleanBookIds: prepared.map(item => item.ref.id).filter(id => !duplicateBookIds.has(id)),
+    };
+};
+
+const WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT = [
+    '你是世界书去重审校员，只判断候选世界书是否承担相同设定功能。',
+    '重点比较功能、事实覆盖、触发用途和冲突关系，不要只看字面相似。',
+    '不要删除或自动改写用户内容，只输出给人工确认的结构化建议。',
+    '必须只返回 JSON，不要 Markdown，不要解释。',
+].join('\n');
+
+const normalizedAiRelation = (value: unknown): WorldbookDuplicateAiRelation => {
+    const relation = String(value || '').trim().toLowerCase();
+    if (relation === 'duplicate') return 'duplicate';
+    if (relation === 'overlap') return 'overlap';
+    if (relation === 'complementary') return 'complementary';
+    if (relation === 'conflict') return 'conflict';
+    if (relation === 'unrelated') return 'unrelated';
+    return 'overlap';
+};
+
+const asReviewTextArray = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+        return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, 6);
+    }
+    const text = String(value || '').trim();
+    return text ? [text] : [];
+};
+
+const excerptForAi = (value: string, maxLength = 900): string => makeTextExcerpt(value || '', maxLength);
+
+const buildWorldbookDedupeAiPrompt = (
+    books: WorldbookLike[],
+    findings: WorldbookDuplicateFinding[],
+): string => {
+    const bookById = new Map(books.map(book => [book.id, book]));
+    const candidates = findings.map(finding => {
+        const bookA = bookById.get(finding.bookA.id);
+        const bookB = bookById.get(finding.bookB.id);
+        return {
+            findingId: finding.id,
+            localDuplicateRate: finding.duplicateRate,
+            localVerdict: finding.verdict,
+            localReasons: finding.reasons,
+            sharedKeywords: finding.sharedKeywords,
+            bookA: {
+                title: finding.bookA.title,
+                category: finding.bookA.category || '',
+                keywords: [...(bookA?.key || []), ...(bookA?.keysecondary || [])].slice(0, 12),
+                contentExcerpt: excerptForAi(bookA?.content || ''),
+            },
+            bookB: {
+                title: finding.bookB.title,
+                category: finding.bookB.category || '',
+                keywords: [...(bookB?.key || []), ...(bookB?.keysecondary || [])].slice(0, 12),
+                contentExcerpt: excerptForAi(bookB?.content || ''),
+            },
+            evidence: finding.evidence.map(item => ({
+                sourceText: item.sourceText,
+                targetText: item.targetText,
+                similarity: item.similarity,
+            })),
+        };
+    });
+
+    return JSON.stringify({
+        task: 'review_worldbook_duplicate_candidates',
+        outputSchema: {
+            reviews: [{
+                findingId: 'string，必须等于输入候选的 findingId',
+                relation: 'duplicate | overlap | complementary | conflict | unrelated',
+                functionalOverlap: '0-100，判断两条承担同一设定功能的程度',
+                verdict: '一句中文结论',
+                mergeAdvice: ['具体合并、拆分或改标题/关键词建议'],
+                keepAdvice: '可选：保留哪条或如何保留',
+                needsHumanReview: ['需要人工确认的点'],
+            }],
+        },
+        candidates,
+    }, null, 2);
+};
+
+const parseWorldbookDedupeAiReviews = (
+    rawText: string,
+    allowedFindingIds: Set<string>,
+): WorldbookDuplicateAiReview[] => {
+    const parsed = extractJson(rawText);
+    const rawReviews = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.reviews)
+            ? parsed.reviews
+            : Array.isArray(parsed?.results)
+                ? parsed.results
+                : [];
+    const reviews = rawReviews.flatMap((item: any): WorldbookDuplicateAiReview[] => {
+        const findingId = String(item?.findingId || item?.id || item?.pairId || '').trim();
+        if (!allowedFindingIds.has(findingId)) return [];
+        const verdict = makeTextExcerpt(String(item?.verdict || item?.summary || item?.reason || '').trim(), 240);
+        return [{
+            findingId,
+            relation: normalizedAiRelation(item?.relation || item?.type),
+            functionalOverlap: Math.round(clamp(item?.functionalOverlap ?? item?.overlap ?? item?.score, 0, 100, 0)),
+            verdict: verdict || 'AI 认为这组候选需要人工复核。',
+            mergeAdvice: asReviewTextArray(item?.mergeAdvice || item?.suggestions || item?.advice),
+            keepAdvice: String(item?.keepAdvice || item?.keep || '').trim() || undefined,
+            needsHumanReview: asReviewTextArray(item?.needsHumanReview || item?.questions || item?.risks),
+        }];
+    });
+
+    if (reviews.length === 0) {
+        throw new Error('AI 深检没有返回可用的候选结论');
+    }
+    return reviews;
+};
+
+export const reviewWorldbookDuplicatesWithAI = async ({
+    api,
+    books,
+    analysis,
+    maxPairs = 10,
+    fetchImpl = fetch,
+}: ReviewWorldbookDuplicatesWithAIInput): Promise<WorldbookDuplicateAiResult> => {
+    const baseUrl = String(api?.baseUrl || '').trim().replace(/\/+$/, '');
+    const apiKey = String(api?.apiKey || '').trim();
+    const model = String(api?.model || '').trim();
+    if (!baseUrl || !apiKey || !model) {
+        throw new Error('请先配置世界书去重 AI 的 URL、Key 和模型');
+    }
+
+    const findings = (analysis.findings || []).slice(0, Math.max(1, Math.floor(maxPairs)));
+    if (findings.length === 0) {
+        throw new Error('请先运行本地检测并获得候选重复项');
+    }
+
+    const allowedFindingIds = new Set(findings.map(finding => finding.id));
+    const temperature = clamp(api.temperature, 0, 2, 0.1);
+    const response = await fetchImpl(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model,
+            messages: [
+                { role: 'system', content: WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT },
+                { role: 'user', content: buildWorldbookDedupeAiPrompt(books, findings) },
+            ],
+            temperature,
+            stream: false,
+            max_tokens: 1800,
+        }),
+    });
+
+    if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`世界书去重 AI 请求失败 (HTTP ${response.status})${detail ? `：${detail.slice(0, 160)}` : ''}`);
+    }
+
+    const data = await safeResponseJson(response);
+    const rawText = extractContent(data);
+    if (!rawText) throw new Error('世界书去重 AI 没有返回内容');
+    return {
+        model,
+        reviewedAt: Date.now(),
+        rawText,
+        reviews: parseWorldbookDedupeAiReviews(rawText, allowedFindingIds),
     };
 };
 
