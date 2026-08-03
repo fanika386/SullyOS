@@ -24,6 +24,54 @@
 后续注意：
 ```
 
+## 2026-08-03 - 用户档案多面具
+
+本次任务：
+
+把原本单一的用户档案扩展为可切换的多个用户面具，让不同 RP 身份可以使用不同名字、头像、bio 和分角色头像。
+
+修改内容：
+
+- 在 `types.ts` 为 `UserProfile` 增加 `id`、`label`、`personaPrompt`、`characterUserProfileBindings` 等多身份字段，并在备份结构中增加 `userProfiles`。
+- 新增 `utils/userProfiles.ts`，集中处理默认身份、旧数据归一化、角色绑定解析和旧分角色头像兜底。
+- 在 `utils/db.ts` 中复用既有 `user_profile` store 保存多条身份记录，旧备份的单个 `userProfile` 会导入为默认身份 `me`。
+- 在 `context/OSContext.tsx` 中保留旧 `userProfile` 作为默认身份，同时向 UI 暴露 `userProfiles`、角色绑定表和统一解析函数。
+- 在 `apps/UserApp.tsx` 的“我的档案”页增加面具选择、新建、删除和私聊角色绑定入口；姓名、头像、bio 和额外身份设定会作用于当前选中的面具。
+- 在 `apps/Chat.tsx` 中让私聊 prompt、用户气泡头像和新用户消息 metadata 使用当前角色解析出的身份。
+- 新增 `utils/userProfiles.test.ts`、`utils/db.userProfiles.test.ts`、`utils/context.userProfiles.test.ts`，覆盖绑定解析、备份导入导出和 prompt 注入。
+
+新增模块：
+
+- `utils/userProfiles.ts`
+- `utils/userProfiles.test.ts`
+- `utils/db.userProfiles.test.ts`
+- `utils/context.userProfiles.test.ts`
+
+影响模块：
+
+- `apps/UserApp.tsx`
+- `apps/Chat.tsx`
+- `context/OSContext.tsx`
+- `types.ts`
+- `utils/db.ts`
+- `utils/context.ts`
+
+是否修改业务逻辑：
+
+- 是。私聊按角色绑定解析用户身份；群聊、约会、主动消息、Instant Push 等暂时仍走默认身份或原有兼容路径。
+
+是否更新 `01_PROJECT_MAP.md`：
+
+- 否。本次只扩展既有用户档案模块。
+
+是否更新 `02_ARCHITECTURE.md`：
+
+- 否。总体架构不变，新增逻辑在 OSContext 和用户档案工具层内闭合。
+
+后续注意：
+
+- 旧数据会在运行时自动生成一个默认身份；未新增 IndexedDB store，不需要提升 DB version。
+
 ## 2026-08-03 - 世界书去重 AI 深检
 
 本次任务：

@@ -940,11 +940,15 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
             apiMessages: historySlice.map((m, index) => {
                 let content: any = m.content;
                 const timeStr = `[${ChatPrompts.formatDate(m.timestamp, charTz)}]`;
+                const userProfileNameAtMessage = (() => {
+                    if (m.role !== 'user') return '';
+                    const raw = (m.metadata as any)?.userProfileName;
+                    return typeof raw === 'string' ? raw.trim() : '';
+                })();
                 const sourceTag = (() => {
                     const source = m.metadata?.source;
-                    if (source === 'call') return '[通话]';
-                    if (source === 'date') return '[约会]';
-                    return '[聊天]';
+                    const label = source === 'call' ? '通话' : source === 'date' ? '约会' : '聊天';
+                    return userProfileNameAtMessage ? `[${label} · ${userProfileNameAtMessage}]` : `[${label}]`;
                 })();
                 
                 if (m.replyTo) {

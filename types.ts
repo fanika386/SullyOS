@@ -2443,9 +2443,19 @@ export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memo
 }
 
 export interface UserProfile {
+    /** 多身份档案 id。旧数据缺省视为 'me'，也就是默认身份。 */
+    id?: string;
+    /** 档案列表里显示的短标签；缺省用 name。 */
+    label?: string;
     name: string;
     avatar: string;
     bio: string;
+    /** 额外发送给 AI 的身份/面具提示词，适合放更明确的角色扮演设定。 */
+    personaPrompt?: string;
+    createdAt?: number;
+    updatedAt?: number;
+    /** 默认身份上保存的角色绑定表：charId → user profile id。 */
+    characterUserProfileBindings?: Record<string, string>;
     /** 分角色聊天头像（档案 App 设置）：charId → 头像（http(s) URL 或 data:image）。
      *  私聊里「你」的头像取 perCharAvatars[charId] || avatar（上面的整体头像作宏观默认）；
      *  群聊/其他场合仍用整体头像。删角色留下的孤儿键无害，读取端永远按当前 charId 取。 */
@@ -3083,6 +3093,10 @@ export interface FullBackupData {
     characterGroups?: CharacterGroup[];
     groups?: GroupProfile[];
     messages?: Message[];
+    /** 多个「我/面具」档案；旧备份只有 userProfile。 */
+    userProfiles?: UserProfile[];
+    /** 角色绑定哪个用户档案：charId → user profile id。 */
+    characterUserProfileBindings?: Record<string, string>;
     customThemes?: ChatTheme[];
     savedEmojis?: Emoji[]; 
     emojiCategories?: EmojiCategory[]; 

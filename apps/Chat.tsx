@@ -62,7 +62,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, resolveUserProfileForCharacter, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -182,6 +182,15 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    const effectiveUserProfile = useMemo(
+        () => resolveUserProfileForCharacter(char?.id),
+        [char?.id, resolveUserProfileForCharacter],
+    );
+    const userProfileMessageMetadata = useMemo(() => ({
+        userProfileId: effectiveUserProfile.id || 'me',
+        userProfileName: effectiveUserProfile.name,
+        userProfileAvatar: effectiveUserProfile.perCharAvatars?.[char?.id || ''] || effectiveUserProfile.avatar,
+    }), [char?.id, effectiveUserProfile.avatar, effectiveUserProfile.id, effectiveUserProfile.name, effectiveUserProfile.perCharAvatars]);
     charRef.current = char; // Keep ref in sync for async callbacks
     const currentThemeId = char?.bubbleStyle || 'default';
     // 解析逻辑抽到 utils/groupChat/theme.ts（群聊共用），行为不变
@@ -224,7 +233,7 @@ const Chat: React.FC = () => {
     // --- Initialize Hook ---
     const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
-        userProfile,
+        userProfile: effectiveUserProfile,
         apiConfig,
         groups,
         emojis: aiVisibleEmojis,
@@ -926,7 +935,7 @@ const Chat: React.FC = () => {
         
         if (type === 'image') {
             const recentChat = messages.slice(-10).map(m => {
-                const sender = m.role === 'user' ? userProfile.name : char.name;
+                const sender = m.role === 'user' ? effectiveUserProfile.name : char.name;
                 return `${sender}: ${m.content.substring(0, 100)}`;
             });
             await DB.saveGalleryImage({
@@ -940,7 +949,13 @@ const Chat: React.FC = () => {
             addToast('图片已保存至相册', 'info');
         }
 
-        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
+        const msgPayload: any = {
+            charId: char.id,
+            role: 'user',
+            type,
+            content: text,
+            metadata: { ...(metadata || {}), ...userProfileMessageMetadata },
+        };
         
         if (replyTarget) {
             msgPayload.replyTo = {
@@ -1038,14 +1053,14 @@ const Chat: React.FC = () => {
                         role: 'user',
                         type: 'xhs_card',
                         content: note.title || '小红书笔记',
-                        metadata: { xhsNote: note }
+                        metadata: { xhsNote: note, ...userProfileMessageMetadata }
                     });
                     // F12 调试（仅开发分支）：打印卡片存了啥 + 角色实际会读到的文本。
                     if (isDevDebugAvailable()) {
                         console.log('[卡片调试] 小红书卡片·metadata =', note);
                         console.log('[卡片调试] 小红书卡片·角色将读到 =\n' + normalizeMessageContent(
                             { type: 'xhs_card', role: 'user', content: note.title || '小红书笔记', metadata: { xhsNote: note } } as any,
-                            char.name, userProfile.name,
+                            char.name, effectiveUserProfile.name,
                         ));
                     }
                     xhsCardCreated = true;
@@ -1084,14 +1099,14 @@ const Chat: React.FC = () => {
                         role: 'user',
                         type: 'webpage_card',
                         content: webpage.title,
-                        metadata: { webpage },
+                        metadata: { webpage, ...userProfileMessageMetadata },
                     });
                     // F12 调试（仅开发分支）：打印卡片存了啥 + 角色实际会读到的文本。
                     if (isDevDebugAvailable()) {
                         console.log('[卡片调试] 网页卡片·metadata =', webpage);
                         console.log('[卡片调试] 网页卡片·角色将读到 =\n' + normalizeMessageContent(
                             { type: 'webpage_card', role: 'user', content: webpage.title, metadata: { webpage } } as any,
-                            char.name, userProfile.name,
+                            char.name, effectiveUserProfile.name,
                         ));
                     }
                     webpageCardCreated = true;
@@ -1137,10 +1152,10 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'transfer',
             content: action === 'accepted' ? '[已收款]' : '[已退回]',
-            metadata: { receipt: action, amount: msg.metadata?.amount, ref: msg.id },
+            metadata: { receipt: action, amount: msg.metadata?.amount, ref: msg.id, ...userProfileMessageMetadata },
         });
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     // 用户点「生活记录」代记卡选择确认 / 否决：
     // 否决 → 记录标记 rejected（不再计入注入摘要）+ 回滚银行流水（expense）+
@@ -1325,10 +1340,10 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'mcd_card',
             content,
-            metadata: { mcdCardKind: 'cart', mcdCartItems: items },
+            metadata: { mcdCardKind: 'cart', mcdCartItems: items, ...userProfileMessageMetadata },
         } as any);
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     // 用户在菜单卡某条单品上点 💭 → 立即把这条扔给角色让 ta 评价 (候选状态, 不进购物车)
     const handleMcdCandidate = useCallback(async (item: import('../components/chat/McdCard').McdCartItem) => {
@@ -1340,10 +1355,10 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'mcd_card',
             content,
-            metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
+            metadata: { mcdCardKind: 'candidate', mcdCandidate: item, ...userProfileMessageMetadata },
         } as any);
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     // 小程序内输入 → 直接保存 user 消息 + 立即触发 AI (主聊天 handleSendText 不自动触发,
     // 那是设计上的"手动 ⚡ 触发"流程, 但小程序里用户预期发完就有回复, 跳过那个步骤)。
@@ -1356,13 +1371,13 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'text',
             content: trimmed,
-            metadata: { fromMcdMiniApp: true },
+            metadata: { fromMcdMiniApp: true, ...userProfileMessageMetadata },
         } as any);
         const recent = await DB.getRecentMessagesByCharId(char.id, 200);
         setMessages(recent);
         triggerAI(recent);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [char, isTyping, triggerAI]);
+    }, [char, isTyping, triggerAI, userProfileMessageMetadata]);
 
     // 小程序状态实时同步到 ref, 让下次 send 走主 pipeline 时能注入到 system prompt
     const handleMcdMiniAppStateChange = useCallback((state: import('../utils/mcdToolBridge').McdMiniAppSnapshot) => {
@@ -1401,10 +1416,11 @@ const Chat: React.FC = () => {
                 mcdCardKind: 'cart',
                 mcdCartItems: items,
                 mcdOrderContext: ctx,
+                ...userProfileMessageMetadata,
             },
         } as any);
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     // ─── 瑞幸 handlers (与麦当劳同构) ───
     const handleLuckinSendCart = useCallback(async (items: import('../components/chat/LuckinCard').LuckinCartItem[]) => {
@@ -1421,10 +1437,10 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'luckin_card',
             content,
-            metadata: { luckinCardKind: 'cart', luckinCartItems: items },
+            metadata: { luckinCardKind: 'cart', luckinCartItems: items, ...userProfileMessageMetadata },
         } as any);
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     const handleLuckinCandidate = useCallback(async (item: import('../components/chat/LuckinCard').LuckinCartItem) => {
         if (!char || !item) return;
@@ -1435,10 +1451,10 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'luckin_card',
             content,
-            metadata: { luckinCardKind: 'candidate', luckinCandidate: item },
+            metadata: { luckinCardKind: 'candidate', luckinCandidate: item, ...userProfileMessageMetadata },
         } as any);
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     const handleLuckinMiniAppSend = useCallback(async (text: string) => {
         if (!char || !text.trim() || isTyping) return;
@@ -1448,13 +1464,13 @@ const Chat: React.FC = () => {
             role: 'user',
             type: 'text',
             content: trimmed,
-            metadata: { fromLuckinMiniApp: true },
+            metadata: { fromLuckinMiniApp: true, ...userProfileMessageMetadata },
         } as any);
         const recent = await DB.getRecentMessagesByCharId(char.id, 200);
         setMessages(recent);
         triggerAI(recent);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [char, isTyping, triggerAI]);
+    }, [char, isTyping, triggerAI, userProfileMessageMetadata]);
 
     const handleLuckinMiniAppStateChange = useCallback((state: import('../utils/luckinToolBridge').LuckinMiniAppSnapshot) => {
         luckinMiniAppRef.current = state;
@@ -1488,10 +1504,11 @@ const Chat: React.FC = () => {
                 luckinCardKind: 'cart',
                 luckinCartItems: items,
                 luckinOrderContext: ctx,
+                ...userProfileMessageMetadata,
             },
         } as any);
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, userProfileMessageMetadata]);
 
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
@@ -1543,7 +1560,7 @@ const Chat: React.FC = () => {
         setTheaterSlotIdx(index);
         setIsTheaterGenerating(true);
         try {
-            const updated = await generateSlotTheater(char, userProfile, scheduleData, index, apiConfig, forceRegenerate);
+            const updated = await generateSlotTheater(char, effectiveUserProfile, scheduleData, index, apiConfig, forceRegenerate);
             if (updated) {
                 setScheduleData(updated);
             } else {
@@ -1582,6 +1599,7 @@ const Chat: React.FC = () => {
                 emoji: slot.emoji,
                 date: scheduleData.date,
                 exposed,
+                ...userProfileMessageMetadata,
             },
         });
         // 关掉播放器 + 日程 modal，回到聊天看到卡片（但不强行触发回复）
@@ -1595,7 +1613,7 @@ const Chat: React.FC = () => {
         if (!targetChar || isScheduleGenerating) return;
         setIsScheduleGenerating(true);
         try {
-            const result = await generateDailyScheduleForChar(targetChar, userProfile, apiConfig, forceRegenerate);
+            const result = await generateDailyScheduleForChar(targetChar, resolveUserProfileForCharacter(targetChar.id), apiConfig, forceRegenerate);
             if (result) setScheduleData(result);
         } catch (e) {
             console.error('[Schedule] Generation error:', e);
@@ -1615,7 +1633,7 @@ const Chat: React.FC = () => {
         if (!isScheduleFeatureOn(updatedChar)) return;
         setIsScheduleGenerating(true);
         try {
-            const result = await generateDailyScheduleForChar(updatedChar, userProfile, apiConfig, true);
+            const result = await generateDailyScheduleForChar(updatedChar, resolveUserProfileForCharacter(updatedChar.id), apiConfig, true);
             if (result) setScheduleData(result);
         } catch (e) {
             console.error('[Schedule] Regeneration after style change failed:', e);
@@ -1923,7 +1941,7 @@ const Chat: React.FC = () => {
                 setVectorizePendingCount(remaining);
 
                 // processNewMessages 内部直接从 DB 加载并按缓冲区口径取批，忽略首个参数，传 [] 即可
-                const pipelineResult = await processNewMessages([], char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
+                const pipelineResult = await processNewMessages([], char.id, char.name, mpEmb, mpLLM, effectiveUserProfile?.name || '', true);
                 if (char.id !== activeCharIdRef.current) break;
 
                 // 软跳过：缓冲区还没到阈值 / 热区还没被挤出 / 已有任务在跑 —— 不是 LLM 失败
@@ -2065,13 +2083,13 @@ const Chat: React.FC = () => {
                 setArchiveProgress(`归档中 ${dateStr} (${idx + 1}/${datesToProcess.length})`);
                 const dayMsgs = msgsByDate[dateStr];
                 const rawLog = dayMsgs
-                    .map(m => formatMessageWithTime(m, char.name, userProfile.name, formatTime))
+                    .map(m => formatMessageWithTime(m, char.name, effectiveUserProfile.name, formatTime))
                     .join('\n');
                 
                 let prompt = template;
                 prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
                 prompt = prompt.replace(/\$\{char\.name\}/g, char.name);
-                prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
+                prompt = prompt.replace(/\$\{userProfile\.name\}/g, effectiveUserProfile.name);
                 prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000));
 
                 const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -2362,14 +2380,14 @@ const Chat: React.FC = () => {
 
         // Build preview text (first few messages)
         const previewLines = selectedMsgs.slice(0, 4).map(m => {
-            const sender = m.role === 'user' ? userProfile.name : char.name;
+            const sender = m.role === 'user' ? effectiveUserProfile.name : char.name;
             const text = m.type === 'text' ? m.content.slice(0, 30) : `[${m.type === 'image' ? '图片' : m.type === 'emoji' ? '表情' : m.type}]`;
             return `${sender}: ${text}`;
         });
         if (selectedMsgs.length > 4) previewLines.push(`... 共 ${selectedMsgs.length} 条消息`);
 
         const forwardData = {
-            fromUserName: userProfile.name,
+            fromUserName: effectiveUserProfile.name,
             fromCharName: char.name,
             count: selectedMsgs.length,
             preview: previewLines,
@@ -2713,7 +2731,7 @@ const Chat: React.FC = () => {
                                      windowsill: { label: '窗台', color: '#14b8a6' },
                                  };
                                  const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
-                                 const roomLabel = getRoomLabel(m.room as any, userProfile?.name) || meta.label;
+                                 const roomLabel = getRoomLabel(m.room as any, effectiveUserProfile?.name) || meta.label;
                                  return (
                                      <div
                                          key={i}
@@ -3071,7 +3089,7 @@ const Chat: React.FC = () => {
                             activeTheme={activeTheme}
                             charAvatar={char.avatar}
                             charName={char.name}
-                            userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
+                            userAvatar={effectiveUserProfile.perCharAvatars?.[char.id] || effectiveUserProfile.avatar}
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
@@ -3179,7 +3197,7 @@ const Chat: React.FC = () => {
                                     activeTheme={activeTheme}
                                     charAvatar={char.avatar}
                                     charName={char.name}
-                                    userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
+                                    userAvatar={effectiveUserProfile.perCharAvatars?.[char.id] || effectiveUserProfile.avatar}
                                     onLongPress={() => {}}
                                     onReply={() => {}}
                                     selectionMode={false}
@@ -3541,7 +3559,7 @@ const Chat: React.FC = () => {
                 open={mcdAppOpen}
                 onClose={() => setMcdAppOpen(false)}
                 char={char}
-                userProfile={userProfile}
+                userProfile={effectiveUserProfile}
                 messages={messages}
                 isTyping={isTyping}
                 onSendMessage={handleMcdMiniAppSend}
@@ -3554,7 +3572,7 @@ const Chat: React.FC = () => {
                 open={luckinAppOpen}
                 onClose={() => setLuckinAppOpen(false)}
                 char={char}
-                userProfile={userProfile}
+                userProfile={effectiveUserProfile}
                 messages={messages}
                 isTyping={isTyping}
                 onSendMessage={handleLuckinMiniAppSend}

@@ -184,7 +184,11 @@ export const ContextBuilder = {
         if (!groupOptions?.skipUserProfile) {
             context += `### 互动对象 (User)\n`;
             context += `- 名字: ${user.name}\n`;
-            context += `- 设定/备注: ${user.bio || '无'}\n\n`;
+            context += `- 设定/备注: ${user.bio || '无'}\n`;
+            if (user.personaPrompt?.trim()) {
+                context += `- 额外身份设定: ${user.personaPrompt.trim()}\n`;
+            }
+            context += `\n`;
         }
 
         // 4. [NEW] 印象档案 (Private Impression)

@@ -43,3 +43,29 @@ describe('buildMessageHistory 私聊表情包带名字', () => {
         expect(content).toContain('发送了表情包');
     });
 });
+
+describe('buildMessageHistory 私聊历史保留用户面具名', () => {
+    const char = { id: 'c1', name: '小角色' } as any;
+    const userProfile = { name: '当前面具' } as any;
+    const t0 = Date.now() - 60_000;
+
+    it('用户消息 metadata 里有历史面具名时，上下文会标出当时身份', () => {
+        const history = [
+            {
+                id: 1,
+                charId: 'c1',
+                role: 'user',
+                type: 'text',
+                content: '这是旧面具说的话',
+                timestamp: t0,
+                metadata: { userProfileName: '旧面具' },
+            },
+        ] as any[];
+        const { apiMessages } = ChatPrompts.buildMessageHistory(history, 10, char, userProfile, []);
+        const userMsg = apiMessages.find((m: any) => m.role === 'user');
+        const content = userMsg!.content as string;
+
+        expect(content).toContain('[聊天 · 旧面具]');
+        expect(content).toContain('这是旧面具说的话');
+    });
+});

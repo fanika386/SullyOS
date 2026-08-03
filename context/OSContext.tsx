@@ -21,6 +21,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
 import { DEFAULT_PROXY_WORKER, getProxyWorkerUrl, rewriteStaleWorkerUrl, rewriteXhsLiteServerUrl } from '../utils/proxyWorker';
+import { buildUserProfileBackupFields, DEFAULT_USER_PROFILE_ID, getDefaultUserProfile, normalizeUserProfiles, resolveUserProfileForCharacter as resolveUserProfileForCharacterFromList, withUserProfileId } from '../utils/userProfiles';
 import { INSTALLED_APPS } from '../constants';
 import { markBackupDone } from '../utils/backupReminder';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
@@ -280,6 +281,13 @@ interface OSContextType {
   // User Profile
   userProfile: UserProfile;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
+  userProfiles: UserProfile[];
+  characterUserProfileBindings: Record<string, string>;
+  createUserProfile: (seed?: Partial<UserProfile>) => Promise<UserProfile>;
+  updateUserProfileById: (id: string, updates: Partial<UserProfile>) => void;
+  deleteUserProfile: (id: string) => void;
+  bindUserProfileToCharacter: (charId: string, profileId?: string) => void;
+  resolveUserProfileForCharacter: (charId?: string) => UserProfile;
 
   availableModels: string[];
   setAvailableModels: (models: string[]) => void;
@@ -566,6 +574,7 @@ const generateAvatar = (seed: string) => {
 };
 
 const defaultUserProfile: UserProfile = {
+    id: DEFAULT_USER_PROFILE_ID,
     name: 'User',
     avatar: generateAvatar('User'),
     bio: 'No description yet.'
@@ -818,7 +827,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [novels, setNovels] = useState<NovelBook[]>([]); // New
   const [songs, setSongs] = useState<SongSheet[]>([]);
 
-  const [userProfile, setUserProfile] = useState<UserProfile>(defaultUserProfile);
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => withUserProfileId(defaultUserProfile, DEFAULT_USER_PROFILE_ID));
+  const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => [withUserProfileId(defaultUserProfile, DEFAULT_USER_PROFILE_ID)]);
+  const [characterUserProfileBindings, setCharacterUserProfileBindings] = useState<Record<string, string>>({});
   
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -1329,10 +1340,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         };
 
-        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs, dbCharGroups] = await Promise.all([
+        const [dbChars, dbThemes, dbUser, dbUserProfiles, dbGroups, dbWorldbooks, dbNovels, dbSongs, dbCharGroups] = await Promise.all([
             settle(DB.getAllCharacters(), 'characters', [] as CharacterProfile[]),
             settle(DB.getThemes(), 'themes', [] as ChatTheme[]),
             settle(DB.getUserProfile(), 'userProfile', null as UserProfile | null),
+            settle(DB.getUserProfiles(), 'userProfiles', [] as UserProfile[]),
             settle(DB.getGroups(), 'groups', [] as GroupProfile[]),
             settle(DB.getAllWorldbooks(), 'worldbooks', [] as Worldbook[]),
             settle(DB.getAllNovels(), 'novels', [] as NovelBook[]),
@@ -1427,7 +1439,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setNovels(dbNovels);
         setSongs(dbSongs);
         setCustomThemes(dbThemes);
-        if (dbUser) setUserProfile(dbUser);
+        const normalizedProfiles = normalizeUserProfiles(dbUserProfiles, dbUser || defaultUserProfile);
+        const defaultProfile = getDefaultUserProfile(normalizedProfiles, defaultUserProfile);
+        setUserProfiles(normalizedProfiles);
+        setUserProfile(defaultProfile);
+        setCharacterUserProfileBindings(defaultProfile.characterUserProfileBindings || {});
 
       } catch (err) {
         console.error('Data init failed:', err);
@@ -2770,7 +2786,125 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       await DB.deleteSong(id);
   };
 
-  const updateUserProfile = async (updates: Partial<UserProfile>) => { setUserProfile(prev => { const next = { ...prev, ...updates }; DB.saveUserProfile(next); return next; }); };
+  const updateUserProfile = async (updates: Partial<UserProfile>) => {
+      setUserProfiles(prev => {
+          const normalized = normalizeUserProfiles(prev, userProfile);
+          const currentDefault = getDefaultUserProfile(normalized, userProfile);
+          const nextDefault = withUserProfileId({
+              ...currentDefault,
+              ...updates,
+              id: DEFAULT_USER_PROFILE_ID,
+              updatedAt: Date.now(),
+          }, DEFAULT_USER_PROFILE_ID);
+          const nextProfiles = normalizeUserProfiles([
+              nextDefault,
+              ...normalized.filter(profile => profile.id !== DEFAULT_USER_PROFILE_ID),
+          ], nextDefault);
+          setUserProfile(nextDefault);
+          setCharacterUserProfileBindings(nextDefault.characterUserProfileBindings || {});
+          DB.saveUserProfile(nextDefault);
+          return nextProfiles;
+      });
+  };
+
+  const createUserProfile = async (seed: Partial<UserProfile> = {}): Promise<UserProfile> => {
+      const timestamp = Date.now();
+      const id = seed.id && seed.id !== DEFAULT_USER_PROFILE_ID
+          ? seed.id
+          : `persona_${timestamp.toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const profile = withUserProfileId({
+          name: seed.name || `面具 ${userProfiles.length + 1}`,
+          avatar: seed.avatar || userProfile.avatar,
+          bio: seed.bio || '',
+          personaPrompt: seed.personaPrompt || '',
+          perCharAvatars: seed.perCharAvatars,
+          vrState: seed.vrState,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ...seed,
+          id,
+      }, id);
+      setUserProfiles(prev => normalizeUserProfiles([...prev, profile], userProfile));
+      await DB.saveUserProfileById(profile);
+      return profile;
+  };
+
+  const updateUserProfileById = async (id: string, updates: Partial<UserProfile>) => {
+      if (!id) return;
+      if (id === DEFAULT_USER_PROFILE_ID) {
+          await updateUserProfile(updates);
+          return;
+      }
+      setUserProfiles(prev => {
+          const normalized = normalizeUserProfiles(prev, userProfile);
+          const existing = normalized.find(profile => profile.id === id);
+          if (!existing) return normalized;
+          const nextProfile = withUserProfileId({ ...existing, ...updates, id, updatedAt: Date.now() }, id);
+          DB.saveUserProfileById(nextProfile);
+          return normalizeUserProfiles(normalized.map(profile => profile.id === id ? nextProfile : profile), userProfile);
+      });
+  };
+
+  const deleteUserProfile = async (id: string) => {
+      if (!id || id === DEFAULT_USER_PROFILE_ID) return;
+      setUserProfiles(prev => {
+          const normalized = normalizeUserProfiles(prev, userProfile);
+          if (!normalized.some(profile => profile.id === id)) return normalized;
+          const currentDefault = getDefaultUserProfile(normalized, userProfile);
+          const nextBindings = Object.fromEntries(
+              Object.entries(currentDefault.characterUserProfileBindings || {}).filter(([, profileId]) => profileId !== id)
+          );
+          const nextDefault = withUserProfileId({
+              ...currentDefault,
+              characterUserProfileBindings: nextBindings,
+              updatedAt: Date.now(),
+          }, DEFAULT_USER_PROFILE_ID);
+          const remaining = normalized
+              .filter(profile => profile.id !== id && profile.id !== DEFAULT_USER_PROFILE_ID);
+          const nextProfiles = normalizeUserProfiles([nextDefault, ...remaining], nextDefault);
+          setUserProfile(nextDefault);
+          setCharacterUserProfileBindings(nextBindings);
+          DB.deleteUserProfile(id);
+          DB.saveUserProfile(nextDefault);
+          return nextProfiles;
+      });
+  };
+
+  const bindUserProfileToCharacter = async (charId: string, profileId?: string) => {
+      if (!charId) return;
+      setUserProfiles(prev => {
+          const normalized = normalizeUserProfiles(prev, userProfile);
+          const currentDefault = getDefaultUserProfile(normalized, userProfile);
+          const nextBindings = { ...(currentDefault.characterUserProfileBindings || {}) };
+          const validProfileId = profileId && profileId !== DEFAULT_USER_PROFILE_ID && normalized.some(profile => profile.id === profileId)
+              ? profileId
+              : undefined;
+          if (validProfileId) nextBindings[charId] = validProfileId;
+          else delete nextBindings[charId];
+          const nextDefault = withUserProfileId({
+              ...currentDefault,
+              characterUserProfileBindings: nextBindings,
+              updatedAt: Date.now(),
+          }, DEFAULT_USER_PROFILE_ID);
+          const nextProfiles = normalizeUserProfiles([
+              nextDefault,
+              ...normalized.filter(profile => profile.id !== DEFAULT_USER_PROFILE_ID),
+          ], nextDefault);
+          setUserProfile(nextDefault);
+          setCharacterUserProfileBindings(nextBindings);
+          DB.saveUserProfile(nextDefault);
+          return nextProfiles;
+      });
+  };
+
+  const resolveUserProfileForCharacter = useCallback((charId?: string) => {
+      return resolveUserProfileForCharacterFromList(
+          userProfiles,
+          characterUserProfileBindings,
+          charId,
+          userProfile,
+      );
+  }, [characterUserProfileBindings, userProfile, userProfiles]);
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
   const setCustomIcon = async (appId: string, iconUrl: string | undefined) => {
@@ -3492,7 +3626,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'emoji_categories': backupData.emojiCategories = processedData; break;
                   case 'assets': backupData.assets = processedData; break;
                   case 'gallery': backupData.galleryImages = processedData; break;
-                  case 'user_profile': if (processedData[0]) backupData.userProfile = processedData[0]; break;
+                  case 'user_profile': Object.assign(backupData, buildUserProfileBackupFields(processedData)); break;
                   case 'diaries': backupData.diaries = processedData; break;
                   case 'tasks': backupData.tasks = processedData; break;
                   case 'anniversaries': backupData.anniversaries = processedData; break;
@@ -4021,7 +4155,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (chars.length > 0) setCharacters(chars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c))));
           if (groupsList.length > 0) setGroups(groupsList);
           if (themes.length > 0) setCustomThemes(themes);
-          if (user) setUserProfile(user);
+          const profiles = await DB.getUserProfiles();
+          const normalizedProfiles = normalizeUserProfiles(profiles, user || defaultUserProfile);
+          const defaultProfile = getDefaultUserProfile(normalizedProfiles, defaultUserProfile);
+          setUserProfiles(normalizedProfiles);
+          setUserProfile(defaultProfile);
+          setCharacterUserProfileBindings(defaultProfile.characterUserProfileBindings || {});
           if (books.length > 0) setWorldbooks(books);
           if (novelList.length > 0) setNovels(novelList);
           if (songList.length > 0) setSongs(songList);
@@ -4132,6 +4271,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     deleteGroup,
     userProfile,
     updateUserProfile,
+    userProfiles,
+    characterUserProfileBindings,
+    createUserProfile,
+    updateUserProfileById,
+    deleteUserProfile,
+    bindUserProfileToCharacter,
+    resolveUserProfileForCharacter,
     availableModels,
     setAvailableModels,
     apiPresets,

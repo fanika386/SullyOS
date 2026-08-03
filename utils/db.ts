@@ -18,6 +18,7 @@ import { exportMcdLocal, importMcdLocal } from './mcdMcpClient';
 import { exportMcpLocal, importMcpLocal } from './mcpClient';
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
+import { buildUserProfileBackupFields, DEFAULT_USER_PROFILE_ID, normalizeUserProfiles, withUserProfileId } from './userProfiles';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -1407,7 +1408,20 @@ export const DB = {
   saveUserProfile: async (profile: UserProfile): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_USER, 'readwrite');
-      transaction.objectStore(STORE_USER).put({ ...profile, id: 'me' });
+      transaction.objectStore(STORE_USER).put(withUserProfileId(profile, DEFAULT_USER_PROFILE_ID));
+  },
+
+  saveUserProfileById: async (profile: UserProfile): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_USER, 'readwrite');
+      transaction.objectStore(STORE_USER).put(withUserProfileId(profile, profile.id || DEFAULT_USER_PROFILE_ID));
+  },
+
+  deleteUserProfile: async (id: string): Promise<void> => {
+      if (!id || id === DEFAULT_USER_PROFILE_ID) return;
+      const db = await openDB();
+      const transaction = db.transaction(STORE_USER, 'readwrite');
+      transaction.objectStore(STORE_USER).delete(id);
   },
 
   getUserProfile: async (): Promise<UserProfile | null> => {
@@ -1415,14 +1429,27 @@ export const DB = {
       return new Promise((resolve, reject) => {
           const transaction = db.transaction(STORE_USER, 'readonly');
           const store = transaction.objectStore(STORE_USER);
-          const request = store.get('me');
+          const request = store.get(DEFAULT_USER_PROFILE_ID);
           request.onsuccess = () => {
               if (request.result) {
-                  const { id, ...profile } = request.result;
-                  resolve(profile as UserProfile);
+                  resolve(withUserProfileId(request.result as UserProfile, DEFAULT_USER_PROFILE_ID));
               } else {
                   resolve(null);
               }
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  getUserProfiles: async (): Promise<UserProfile[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_USER, 'readonly');
+          const store = transaction.objectStore(STORE_USER);
+          const request = store.getAll();
+          request.onsuccess = () => {
+              const records = (request.result || []) as UserProfile[];
+              resolve(normalizeUserProfiles(records));
           };
           request.onerror = () => reject(request.error);
       });
@@ -2628,17 +2655,13 @@ export const DB = {
           getAllFromStore(STORE_LIFE_SETTINGS),
       ]);
 
-      const userProfile = userProfiles.length > 0 ? {
-          name: userProfiles[0].name,
-          avatar: userProfiles[0].avatar,
-          bio: userProfiles[0].bio
-      } : undefined;
+      const userProfileFields = buildUserProfileBackupFields(userProfiles as UserProfile[]);
 
       const mainState = bankData.find((d: any) => d.id === 'main_state');
       const dollhouseRecord = bankData.find((d: any) => d.id === 'dollhouse_state');
 
       return {
-          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels,
+          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, ...userProfileFields, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels,
           bankState: mainState ? { ...mainState, id: undefined } : undefined,
           bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx,
@@ -2815,7 +2838,7 @@ export const DB = {
           (data as any).mcdLocal !== undefined,
           data.pixelHomeAssets !== undefined,
           data.pixelHomeLayouts !== undefined,
-          data.userProfile !== undefined,
+          data.userProfile !== undefined || data.userProfiles !== undefined || data.characterUserProfileBindings !== undefined,
           data.bankState !== undefined || data.bankDollhouse !== undefined,
       ];
       const sectionTotal = Math.max(1, plannedSections.filter(Boolean).length);
@@ -3278,17 +3301,50 @@ export const DB = {
           data.pixelHomeLayouts = undefined as any;
       }, data.pixelHomeLayouts?.length || 0);
 
-      await runSection('用户资料', data.userProfile !== undefined, async () => {
+      await runSection('用户资料', data.userProfile !== undefined || data.userProfiles !== undefined || data.characterUserProfileBindings !== undefined, async () => {
           if (!hasStore(STORE_USER)) return;
-          await beforeWrite(data.userProfile, '用户资料', true);
+          const sourceProfiles = Array.isArray(data.userProfiles) ? data.userProfiles.filter(Boolean) : [];
+          const profiles = normalizeUserProfiles(sourceProfiles as UserProfile[]);
+
+          if (data.userProfile) {
+              const legacyDefault = withUserProfileId(data.userProfile, DEFAULT_USER_PROFILE_ID);
+              const defaultIndex = profiles.findIndex(profile => profile.id === DEFAULT_USER_PROFILE_ID);
+              if (defaultIndex >= 0) {
+                  profiles[defaultIndex] = { ...legacyDefault, ...profiles[defaultIndex], id: DEFAULT_USER_PROFILE_ID };
+              } else {
+                  profiles.unshift(legacyDefault);
+              }
+          }
+
+          if (profiles.length > 0 && !profiles.some(profile => profile.id === DEFAULT_USER_PROFILE_ID)) {
+              profiles[0] = { ...profiles[0], id: DEFAULT_USER_PROFILE_ID };
+          }
+
+          if (data.characterUserProfileBindings) {
+              if (profiles.length === 0) {
+                  profiles.push({ id: DEFAULT_USER_PROFILE_ID, name: 'User', avatar: '', bio: '' });
+              }
+              const defaultIndex = Math.max(0, profiles.findIndex(profile => profile.id === DEFAULT_USER_PROFILE_ID));
+              const defaultProfile = profiles[defaultIndex];
+              profiles[defaultIndex] = {
+                  ...defaultProfile,
+                  id: DEFAULT_USER_PROFILE_ID,
+                  characterUserProfileBindings: {
+                      ...(defaultProfile.characterUserProfileBindings || {}),
+                      ...data.characterUserProfileBindings,
+                  },
+              };
+          }
+
+          await beforeWrite(profiles, '用户资料', true);
           await withStore(STORE_USER, store => {
               store.clear();
-              if (data.userProfile) {
-                  store.put({ ...data.userProfile, id: 'me' });
-              }
+              profiles.forEach(profile => store.put(withUserProfileId(profile, profile.id || DEFAULT_USER_PROFILE_ID)));
           });
           data.userProfile = undefined as any;
-      }, data.userProfile ? 1 : 0);
+          data.userProfiles = undefined as any;
+          data.characterUserProfileBindings = undefined as any;
+      }, data.userProfiles?.length || (data.userProfile ? 1 : 0));
 
       await runSection('银行状态', data.bankState !== undefined || data.bankDollhouse !== undefined, async () => {
           if (!hasStore(STORE_BANK_DATA)) return;
