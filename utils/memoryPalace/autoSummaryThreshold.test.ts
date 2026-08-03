@@ -44,19 +44,19 @@ describe('记忆宫殿自动总结触发条数配置', () => {
         expect(getMemoryPalaceAutoSummaryThreshold()).toBe(DEFAULT_AUTO_SUMMARY_THRESHOLD);
     });
 
-    it('小阈值提示更新更快和重复风险', () => {
+    it('小阈值提示更新快但容易记碎', () => {
         const hint = getAutoSummaryThresholdHint(MIN_AUTO_SUMMARY_THRESHOLD);
-        expect(hint).toContain('触发更快');
-        expect(hint).toContain('重复');
+        expect(hint).toContain('更新快');
+        expect(hint).toContain('记碎');
     });
 
-    it('中等阈值提示相对均衡', () => {
-        expect(getAutoSummaryThresholdHint(300)).toContain('均衡');
+    it('中等阈值提示比较平衡', () => {
+        expect(getAutoSummaryThresholdHint(300)).toContain('平衡');
     });
 
-    it('大阈值提示更省调用和更长上下文', () => {
+    it('大阈值提示更省调用和更完整', () => {
         const hint = getAutoSummaryThresholdHint(MAX_AUTO_SUMMARY_THRESHOLD);
         expect(hint).toContain('更省');
-        expect(hint).toContain('完整');
+        expect(hint).toContain('更完整');
     });
 });

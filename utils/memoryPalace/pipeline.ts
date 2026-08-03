@@ -87,12 +87,12 @@ export function getMemoryPalaceAutoSummaryThreshold(): number {
 export function getAutoSummaryThresholdHint(threshold: number | string): string {
     const value = normalizeAutoSummaryThreshold(threshold);
     if (value <= 100) {
-        return '数字小：触发更快，但副 API 调用更频繁，短片段更容易被拆散，也更容易出现重复感。';
+        return '数字小 = 更新快，但聊天会被分成小段处理，容易记碎、记重复，副 API 也更费。';
     }
     if (value <= 300) {
-        return '数字适中：更新速度和长段完整性比较均衡。';
+        return '数字中等 = 更新速度和记忆完整度比较平衡，一般够用。';
     }
-    return '数字大：更省调用、长段上下文更完整，但新内容进记忆更慢，未触发前清空聊天风险更高。';
+    return '数字大 = 更省、更完整，但新聊天要攒够才进记忆，清空聊天前记得先处理。';
 }
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
