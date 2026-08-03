@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MountedWorldbook } from '../types';
 import {
     analyzeWorldbookDuplicates,
+    buildWorldbookDedupeAiApiChoices,
     injectWorldbookDepthEntries,
     isWorldbookEntryActive,
     parseStandardWorldbook,
@@ -249,6 +250,28 @@ describe('worldbook duplicate analysis', () => {
 });
 
 describe('worldbook duplicate AI review', () => {
+    it('resolves the selected preset as the AI review API without changing chat settings', () => {
+        const choices = buildWorldbookDedupeAiApiChoices({
+            chatApi: { baseUrl: 'https://chat.example.test/v1', apiKey: 'sk-chat', model: 'expensive-chat' },
+            dedicatedApi: { enabled: true, baseUrl: 'https://dedupe.example.test/v1', apiKey: 'sk-dedupe', model: 'cheap-dedupe' },
+            presets: [{
+                id: 'preset-mini',
+                name: '便宜小模型',
+                config: { baseUrl: 'https://mini.example.test/v1', apiKey: 'sk-mini', model: 'mini-reviewer' },
+            }],
+            selectedChoiceId: 'preset:preset-mini',
+        });
+
+        expect(choices.selected.id).toBe('preset:preset-mini');
+        expect(choices.selected.label).toContain('便宜小模型');
+        expect(choices.selected.api).toMatchObject({
+            baseUrl: 'https://mini.example.test/v1',
+            apiKey: 'sk-mini',
+            model: 'mini-reviewer',
+        });
+        expect(choices.options.map(option => option.id)).toEqual(['chat', 'dedupe', 'preset:preset-mini']);
+    });
+
     it('sends only locally flagged duplicate candidates to a cheap review model', async () => {
         const books = [
             book({
@@ -308,6 +331,10 @@ describe('worldbook duplicate AI review', () => {
         expect(requestedBody.messages[1].content).toContain('guild-a__guild-b');
         expect(requestedBody.messages[1].content).toContain('观星公会');
         expect(requestedBody.messages[1].content).not.toContain('蜂蜜牛角包');
+        expect(requestedBody.messages[0].content).toContain('通俗');
+        expect(requestedBody.messages[0].content).toContain('像给普通用户写提示');
+        expect(requestedBody.messages[1].content).toContain('粗略扫重');
+        expect(requestedBody.messages[1].content).toContain('不用写学术分析');
 
         expect(result.model).toBe('cheap-reviewer');
         expect(result.reviews).toHaveLength(1);

@@ -82,6 +82,39 @@ export interface WorldbookDedupeAiApiConfig {
     temperature?: number;
 }
 
+export interface WorldbookDedupeAiApiDraft {
+    enabled?: boolean;
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+}
+
+export interface WorldbookDedupeAiApiPresetLike {
+    id: string;
+    name: string;
+    config: {
+        baseUrl?: string;
+        apiKey?: string;
+        model?: string;
+        temperature?: number;
+    };
+}
+
+export interface WorldbookDedupeAiApiChoice {
+    id: string;
+    label: string;
+    helperText: string;
+    api: WorldbookDedupeAiApiConfig;
+    configured: boolean;
+}
+
+export interface BuildWorldbookDedupeAiApiChoicesInput {
+    chatApi: WorldbookDedupeAiApiConfig;
+    dedicatedApi?: WorldbookDedupeAiApiDraft;
+    presets?: WorldbookDedupeAiApiPresetLike[];
+    selectedChoiceId?: string;
+}
+
 export interface WorldbookDuplicateAiReview {
     findingId: string;
     relation: WorldbookDuplicateAiRelation;
@@ -141,6 +174,65 @@ const clamp = (value: unknown, min: number, max: number, fallback: number): numb
 const asStringArray = (value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
     return value.map(item => String(item).trim()).filter(Boolean);
+};
+
+const trimDedupeApiConfig = (
+    api: Partial<WorldbookDedupeAiApiConfig>,
+    fallback?: Partial<WorldbookDedupeAiApiConfig>,
+): WorldbookDedupeAiApiConfig => ({
+    baseUrl: String(api.baseUrl || fallback?.baseUrl || '').trim(),
+    apiKey: String(api.apiKey || fallback?.apiKey || '').trim(),
+    model: String(api.model || fallback?.model || '').trim(),
+    temperature: clamp(api.temperature ?? fallback?.temperature, 0, 2, 0.1),
+});
+
+const isDedupeApiConfigured = (api: WorldbookDedupeAiApiConfig): boolean => (
+    Boolean(api.baseUrl && api.apiKey && api.model)
+);
+
+export const buildWorldbookDedupeAiApiChoices = ({
+    chatApi,
+    dedicatedApi,
+    presets = [],
+    selectedChoiceId,
+}: BuildWorldbookDedupeAiApiChoicesInput): { options: WorldbookDedupeAiApiChoice[]; selected: WorldbookDedupeAiApiChoice } => {
+    const chat = trimDedupeApiConfig(chatApi);
+    const options: WorldbookDedupeAiApiChoice[] = [{
+        id: 'chat',
+        label: `聊天 API：${chat.model || '未配置模型'}`,
+        helperText: '跟随平时聊天使用的模型，方便但可能更贵。',
+        api: chat,
+        configured: isDedupeApiConfigured(chat),
+    }];
+
+    const hasDedicatedConfig = Boolean(
+        dedicatedApi?.enabled || dedicatedApi?.baseUrl || dedicatedApi?.apiKey || dedicatedApi?.model,
+    );
+    if (hasDedicatedConfig) {
+        const dedicated = trimDedupeApiConfig(dedicatedApi || {}, chat);
+        options.push({
+            id: 'dedupe',
+            label: `去重专用：${dedicated.model || '未配置模型'}`,
+            helperText: '优先使用世界书去重专用配置，空白项会跟随聊天 API。',
+            api: dedicated,
+            configured: isDedupeApiConfigured(dedicated),
+        });
+    }
+
+    presets.forEach(preset => {
+        const api = trimDedupeApiConfig(preset.config);
+        options.push({
+            id: `preset:${preset.id}`,
+            label: `预设：${preset.name || preset.id}${api.model ? ` · ${api.model}` : ''}`,
+            helperText: '只用于这次粗略扫重，适合选择便宜的小模型。',
+            api,
+            configured: isDedupeApiConfigured(api),
+        });
+    });
+
+    const preferredId = selectedChoiceId || (dedicatedApi?.enabled && hasDedicatedConfig ? 'dedupe' : 'chat');
+    const selected = options.find(option => option.id === preferredId) || options[0];
+    return { options, selected };
 };
 
 export const splitWorldbookKeywords = (value: string): string[] => (
@@ -686,9 +778,10 @@ export const analyzeWorldbookDuplicates = (
 };
 
 const WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT = [
-    '你是世界书去重审校员，只判断候选世界书是否承担相同设定功能。',
-    '重点比较功能、事实覆盖、触发用途和冲突关系，不要只看字面相似。',
-    '不要删除或自动改写用户内容，只输出给人工确认的结构化建议。',
+    '你是世界书去重小助手，只判断候选世界书是不是在说同一件事。',
+    '请用通俗、短句、直接的中文，像给普通用户写提示；不要写学术分析，不要堆专业术语。',
+    '把建议写成用户看得懂的操作：合并哪部分、删哪句、保留哪条、标题或关键词怎么改。',
+    '不要删除或自动改写用户内容，只输出给人工确认的简单建议。',
     '必须只返回 JSON，不要 Markdown，不要解释。',
 ].join('\n');
 
@@ -752,13 +845,18 @@ const buildWorldbookDedupeAiPrompt = (
             reviews: [{
                 findingId: 'string，必须等于输入候选的 findingId',
                 relation: 'duplicate | overlap | complementary | conflict | unrelated',
-                functionalOverlap: '0-100，判断两条承担同一设定功能的程度',
-                verdict: '一句中文结论',
-                mergeAdvice: ['具体合并、拆分或改标题/关键词建议'],
-                keepAdvice: '可选：保留哪条或如何保留',
-                needsHumanReview: ['需要人工确认的点'],
+                functionalOverlap: '0-100，粗略判断两条有多像',
+                verdict: '一句通俗中文结论，例如：这两条主要在说同一件事，可以合在一起。',
+                mergeAdvice: ['短句建议：怎么合并、删哪句、保留哪条、标题或关键词怎么改'],
+                keepAdvice: '可选：用简单话说明哪条更适合保留',
+                needsHumanReview: ['还拿不准、需要用户自己确认的小问题'],
             }],
         },
+        writingStyle: [
+            '这是粗略扫重和修复建议，不是最终判定。',
+            '不用写学术分析，也不要使用“功能覆盖”“语义一致性”等专业说法。',
+            '优先输出短句，每条建议尽量 30 个中文字符以内。',
+        ],
         candidates,
     }, null, 2);
 };

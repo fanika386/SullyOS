@@ -5,6 +5,7 @@ import Modal from '../components/os/Modal';
 import { DiamondsFour, BookOpen, DownloadSimple, UploadSimple, WarningCircle, MagnifyingGlass, X, Check } from '@phosphor-icons/react';
 import {
     analyzeWorldbookDuplicates,
+    buildWorldbookDedupeAiApiChoices,
     parseStandardWorldbook,
     reviewWorldbookDuplicatesWithAI,
     serializeStandardWorldbook,
@@ -13,7 +14,7 @@ import {
     WORLDBOOK_POSITION_LABELS,
     WORLDBOOK_ROLE_LABELS,
 } from '../utils/worldbook';
-import type { WorldbookDuplicateAiRelation, WorldbookDuplicateAiResult, WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
+import type { WorldbookDedupeAiApiDraft, WorldbookDuplicateAiRelation, WorldbookDuplicateAiResult, WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { shareOrDownloadFile } from '../utils/shareExport';
 
@@ -47,19 +48,12 @@ const DEDUPE_AI_RELATION_STYLES: Record<WorldbookDuplicateAiRelation, string> = 
     unrelated: 'bg-slate-50 text-slate-500 border-slate-100',
 };
 
-type WorldbookDedupeApiDraft = {
-    enabled?: boolean;
-    baseUrl?: string;
-    apiKey?: string;
-    model?: string;
-};
-
 type ApiConfigWithWorldbookDedupe<T> = T & {
-    worldbookDedupeApi?: WorldbookDedupeApiDraft;
+    worldbookDedupeApi?: WorldbookDedupeAiApiDraft;
 };
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig } = useOS();
+    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -72,6 +66,7 @@ const WorldbookApp: React.FC = () => {
     const [dedupeAnalysis, setDedupeAnalysis] = useState<WorldbookDuplicateAnalysis | null>(null);
     const [dedupeAiResult, setDedupeAiResult] = useState<WorldbookDuplicateAiResult | null>(null);
     const [isDedupeAiReviewing, setIsDedupeAiReviewing] = useState(false);
+    const [dedupeAiChoiceId, setDedupeAiChoiceId] = useState('');
 
     const PAGE_SIZE = 12;
 
@@ -126,11 +121,21 @@ const WorldbookApp: React.FC = () => {
         () => new Map(worldbooks.map(book => [book.id, book.title])),
         [worldbooks],
     );
-    const dedupeAiModelLabel = useMemo(() => {
+    const dedupeAiApiChoices = useMemo(() => {
         const dedicated = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
-        if (dedicated?.enabled) return dedicated.model?.trim() || apiConfig.model || '未配置模型';
-        return apiConfig.model || '未配置模型';
-    }, [apiConfig]);
+        return buildWorldbookDedupeAiApiChoices({
+            chatApi: {
+                baseUrl: apiConfig.baseUrl,
+                apiKey: apiConfig.apiKey,
+                model: apiConfig.model,
+                temperature: 0.1,
+            },
+            dedicatedApi: dedicated,
+            presets: apiPresets || [],
+            selectedChoiceId: dedupeAiChoiceId,
+        });
+    }, [apiConfig, apiPresets, dedupeAiChoiceId]);
+    const dedupeAiSelectedChoice = dedupeAiApiChoices.selected;
 
     // 编辑页「已有分组」建议列表：随输入实时过滤。
     // 不能用原生 datalist —— 分组一多，移动端 WebView 会把候选渲染成撑爆屏幕、无法滚动的巨型下拉。
@@ -373,24 +378,6 @@ const WorldbookApp: React.FC = () => {
         }
     };
 
-    const resolveDedupeAiApi = () => {
-        const dedicated = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
-        if (dedicated?.enabled) {
-            return {
-                baseUrl: dedicated.baseUrl?.trim() || apiConfig.baseUrl,
-                apiKey: dedicated.apiKey?.trim() || apiConfig.apiKey,
-                model: dedicated.model?.trim() || apiConfig.model,
-                temperature: 0.1,
-            };
-        }
-        return {
-            baseUrl: apiConfig.baseUrl,
-            apiKey: apiConfig.apiKey,
-            model: apiConfig.model,
-            temperature: 0.1,
-        };
-    };
-
     const runDedupeAiReview = async () => {
         if (isDedupeAiReviewing) return;
         if (selectedDedupeBooks.length < 2) {
@@ -403,10 +390,14 @@ const WorldbookApp: React.FC = () => {
             addToast('本地检测没有候选重复项，暂时不需要 AI 深检', 'info');
             return;
         }
+        if (!dedupeAiSelectedChoice.configured) {
+            addToast('请先给当前 AI 选择补全 URL、Key 和模型', 'error');
+            return;
+        }
         setIsDedupeAiReviewing(true);
         try {
             const result = await reviewWorldbookDuplicatesWithAI({
-                api: resolveDedupeAiApi(),
+                api: dedupeAiSelectedChoice.api,
                 books: selectedDedupeBooks,
                 analysis: currentAnalysis,
             });
@@ -808,10 +799,12 @@ const WorldbookApp: React.FC = () => {
 
                                 {dedupeAnalysis.findings.length > 0 && (
                                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
-                                        <div className="flex items-center justify-between gap-3">
+                                        <div className="flex items-start justify-between gap-3">
                                             <div className="min-w-0">
                                                 <div className="text-xs font-black text-emerald-700">AI 语义深检</div>
-                                                <div className="mt-0.5 text-[10px] text-emerald-700/70 truncate">模型：{dedupeAiModelLabel}</div>
+                                                <div className="mt-0.5 text-[10px] leading-relaxed text-emerald-700/70">
+                                                    粗略扫一下重复，并给合并/保留建议；可以选便宜 API，不必用日常聊天的大模型。
+                                                </div>
                                             </div>
                                             <button
                                                 onClick={runDedupeAiReview}
@@ -821,9 +814,27 @@ const WorldbookApp: React.FC = () => {
                                                 {isDedupeAiReviewing ? '深检中…' : 'AI 深检'}
                                             </button>
                                         </div>
-                                        <p className="mt-2 text-[10px] leading-relaxed text-emerald-700/70">
-                                            只发送本地检测出的候选对，用来判断两本是否承担相同设定功能。
-                                        </p>
+                                        <div className="mt-3 space-y-1.5">
+                                            <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">本次使用</label>
+                                            <select
+                                                value={dedupeAiSelectedChoice.id}
+                                                onChange={(event) => setDedupeAiChoiceId(event.target.value)}
+                                                disabled={isDedupeAiReviewing}
+                                                className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-bold text-emerald-800 outline-none disabled:opacity-60"
+                                            >
+                                                {dedupeAiApiChoices.options.map(option => (
+                                                    <option key={option.id} value={option.id}>{option.label}</option>
+                                                ))}
+                                            </select>
+                                            <p className="text-[10px] leading-relaxed text-emerald-700/65">
+                                                {dedupeAiSelectedChoice.helperText} 只发送本地检测出的候选对，不会自动改世界书。
+                                            </p>
+                                            {!dedupeAiSelectedChoice.configured && (
+                                                <p className="text-[10px] leading-relaxed text-rose-500">
+                                                    当前选择缺 URL、Key 或模型，补齐后才能深检。
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
 
