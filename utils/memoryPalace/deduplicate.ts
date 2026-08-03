@@ -67,6 +67,12 @@ export interface AiMergedMemoryDraft {
     sourceIds: string[];
 }
 
+export interface CharacterDedupScanScope {
+    charIds: string[];
+    scopeLabel: string;
+    ownerName: string;
+}
+
 export interface ExactDuplicateDeletionOptions {
     remoteConfig?: RemoteVectorConfig;
     onProgress?: (deleted: number, total: number) => void;
@@ -152,6 +158,19 @@ function resolveMemoryRoom(value: unknown, fallback: MemoryRoom): MemoryRoom {
     return typeof value === 'string' && MEMORY_ROOMS.includes(value as MemoryRoom)
         ? value as MemoryRoom
         : fallback;
+}
+
+export function resolveCharacterDedupScanScope(
+    character: { id?: string; name?: string } | null | undefined,
+): CharacterDedupScanScope {
+    const id = character?.id?.trim();
+    if (!id) throw new Error('需要先选择一个角色');
+    const ownerName = character?.name?.trim() || id;
+    return {
+        charIds: [id],
+        scopeLabel: `【${ownerName}】`,
+        ownerName,
+    };
 }
 
 function compareCanonicalNode(a: MemoryNode, b: MemoryNode): number {

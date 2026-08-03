@@ -86,6 +86,7 @@ export {
     findExactDuplicateMemoryGroups,
     buildAiDuplicatePreviewFromSuggestions,
     buildAiMergedMemoryDraftFromResponse,
+    resolveCharacterDedupScanScope,
     scanExactDuplicateMemories,
     scanSemanticDuplicateMemories,
     scanAiSemanticDuplicateMemories,
@@ -101,6 +102,7 @@ export type {
     AiDuplicateLLMConfig,
     AiSemanticDuplicateScanOptions,
     AiMergedMemoryDraft,
+    CharacterDedupScanScope,
 } from './deduplicate';
 
 // 导出 / 导入（接入外置记忆库、跨设备迁移用）

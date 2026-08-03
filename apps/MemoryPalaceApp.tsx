@@ -13,6 +13,7 @@ import {
     bootstrapPlatesFromHistory, markPlateBootstrapDone,
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
     scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, mergeMemoryNodesWithAi, applyExactDuplicateMemoryDeletion,
+    resolveCharacterDedupScanScope,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
@@ -21,7 +22,6 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 
 /** 手动总结面板：每页渲染多少条聊天记录（翻页，避免一次性塞几百条 DOM 卡顿） */
 const RANGE_PAGE_SIZE = 100;
-const DEDUP_ALL_CHARS = '__all__';
 const SEMANTIC_DEDUP_THRESHOLD = 0.96;
 const DEDUP_AI_SOURCE_MEMORY = 'memoryPalace';
 const DEDUP_AI_SOURCE_MAIN = 'main';
@@ -543,14 +543,14 @@ export default function MemoryPalaceApp() {
     // 一键清空
     const [wiping, setWiping] = useState(false);
     const [wipeResult, setWipeResult] = useState<string | null>(null);
-    // 完整去重：扫描所有角色、按角色内部精确正文去重
+    // 当前角色维护：按角色内部精确正文 / 近似语义 / AI 语义去重
     const [deduping, setDeduping] = useState(false);
     const [dedupResult, setDedupResult] = useState<string | null>(null);
-    const [dedupTargetCharId, setDedupTargetCharId] = useState<string>(DEDUP_ALL_CHARS);
     const [dedupMode, setDedupMode] = useState<DedupMode>('exact');
     const [dedupAiApiSource, setDedupAiApiSource] = useState<string>(DEDUP_AI_SOURCE_MEMORY);
     const [dedupReviewPreview, setDedupReviewPreview] = useState<ExactDuplicateMemoryPreview | null>(null);
     const [dedupSelectedDeleteIds, setDedupSelectedDeleteIds] = useState<Set<string>>(new Set());
+    const [dedupProgress, setDedupProgress] = useState<{ done: number; total: number; label: string } | null>(null);
     const [dedupMergingGroupKey, setDedupMergingGroupKey] = useState<string | null>(null);
     const [dedupMergeDraft, setDedupMergeDraft] = useState<{
         groupKey: string;
@@ -559,18 +559,13 @@ export default function MemoryPalaceApp() {
     } | null>(null);
 
     useEffect(() => {
-        if (dedupTargetCharId !== DEDUP_ALL_CHARS && !characters.some(c => c.id === dedupTargetCharId)) {
-            setDedupTargetCharId(DEDUP_ALL_CHARS);
-        }
-    }, [characters, dedupTargetCharId]);
-
-    useEffect(() => {
         setDedupReviewPreview(null);
         setDedupSelectedDeleteIds(new Set());
+        setDedupProgress(null);
         setDedupMergingGroupKey(null);
         setDedupMergeDraft(null);
         setDedupResult(null);
-    }, [dedupMode, dedupTargetCharId, dedupAiApiSource]);
+    }, [dedupMode, dedupAiApiSource, char?.id]);
 
     // 导出记忆（接入外置记忆库）
     const [exporting, setExporting] = useState(false);
@@ -1802,15 +1797,18 @@ export default function MemoryPalaceApp() {
     /** 完整去重：先按用户选定范围扫描并询问，确认后删除重复节点。 */
     const handleDeduplicateAllMemories = async () => {
         if (deduping) return;
+        if (!char) {
+            setDedupResult('[err]需要先选择一个角色');
+            return;
+        }
+        const scanScope = resolveCharacterDedupScanScope(char);
+        const scanCharIds = scanScope.charIds;
+        const scopeLabel = scanScope.scopeLabel;
+        const modeLabel = dedupMode === 'ai' ? 'AI 语义去重' : dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';
         setDeduping(true);
         setDedupReviewPreview(null);
         setDedupSelectedDeleteIds(new Set());
-        const selectedChar = dedupTargetCharId === DEDUP_ALL_CHARS
-            ? null
-            : characters.find(c => c.id === dedupTargetCharId) || null;
-        const scanCharIds = selectedChar ? [selectedChar.id] : undefined;
-        const scopeLabel = selectedChar ? `【${selectedChar.name}】` : '所有角色';
-        const modeLabel = dedupMode === 'ai' ? 'AI 语义去重' : dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';
+        setDedupProgress({ done: 0, total: 1, label: scanScope.ownerName });
         setDedupResult(`正在扫描${scopeLabel}的记忆节点…`);
         try {
             if (dedupMode === 'ai') {
@@ -1821,24 +1819,28 @@ export default function MemoryPalaceApp() {
                 }
 
                 const charNameById = Object.fromEntries(characters.map(c => [c.id, c.name]));
+                addToast(`${scanScope.ownerName} 的 AI 记忆去重开始了，可以先去做别的`, 'info');
                 const preview = await scanAiSemanticDuplicateMemories({
                     charIds: scanCharIds,
                     llmConfig: aiConfig.config,
                     charNameById,
                     onProgress: (completed, total, charId) => {
                         const owner = charNameById[charId] || charId;
+                        setDedupProgress({ done: completed, total, label: owner });
                         setDedupResult(`AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`);
                     },
                 });
 
                 if (preview.duplicateCount === 0) {
                     setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，没有发现可合并的语义重复项`);
+                    addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成`, 'success');
                     return;
                 }
 
                 setDedupReviewPreview(preview);
                 setDedupSelectedDeleteIds(new Set());
                 setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。AI 候选默认不勾选，请逐条确认后再删除。`);
+                addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，找到 ${preview.duplicateCount} 条候选`, 'success');
                 return;
             }
 
@@ -1854,6 +1856,7 @@ export default function MemoryPalaceApp() {
                     ? `，其中 ${preview.vectorizedCount || 0} 条有向量参与近似判断`
                     : '';
                 setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆${vectorPart}，没有发现重复项`);
+                addToast(`${scanScope.ownerName} 的记忆去重扫描完成，没有发现重复`, 'success');
                 return;
             }
 
@@ -1890,33 +1893,40 @@ export default function MemoryPalaceApp() {
 
             const result = await applyExactDuplicateMemoryDeletion(preview, {
                 remoteConfig: remoteVectorConfig,
-                onProgress: (deleted, total) => setDedupResult(`正在删除 ${deleted}/${total} 条重复记忆…`),
+                onProgress: (deleted, total) => {
+                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName });
+                    setDedupResult(`正在删除 ${deleted}/${total} 条重复记忆…`);
+                },
             });
             const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
             const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
             setDedupResult(
                 `${result.failed.length > 0 ? '[warn]' : '[ok]'}${scopeLabel} · ${modeLabel}：扫描 ${result.scannedCount} 条，删除 ${result.deleted}/${result.duplicateCount} 条重复记忆${remotePart}${failPart}`
             );
+            addToast(`${scanScope.ownerName} 的记忆去重完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success');
             await loadStats();
         } catch (e: any) {
             setDedupResult(`[err]去重失败：${e?.message || e}`);
         } finally {
+            setDedupProgress(null);
             setDeduping(false);
         }
     };
 
     const handleDeleteSelectedAiDedupMemories = async () => {
         if (!dedupReviewPreview || deduping) return;
+        if (!char) {
+            setDedupResult('[err]需要先选择一个角色');
+            return;
+        }
         const selectedPreview = buildSelectedDedupPreview(dedupReviewPreview, dedupSelectedDeleteIds);
         if (selectedPreview.duplicateCount === 0) {
             setDedupResult('[warn]还没有勾选要删除的 AI 候选记忆');
             return;
         }
 
-        const selectedChar = dedupTargetCharId === DEDUP_ALL_CHARS
-            ? null
-            : characters.find(c => c.id === dedupTargetCharId) || null;
-        const scopeLabel = selectedChar ? `【${selectedChar.name}】` : '所有角色';
+        const scanScope = resolveCharacterDedupScanScope(char);
+        const scopeLabel = scanScope.scopeLabel;
         const confirmed = confirm(
             `删除已勾选的 ${selectedPreview.duplicateCount} 条 AI 候选重复记忆吗？\n\n` +
             `范围：${scopeLabel}\n` +
@@ -1931,19 +1941,24 @@ export default function MemoryPalaceApp() {
         try {
             const result = await applyExactDuplicateMemoryDeletion(selectedPreview, {
                 remoteConfig: remoteVectorConfig,
-                onProgress: (deleted, total) => setDedupResult(`正在删除 ${deleted}/${total} 条已勾选记忆…`),
+                onProgress: (deleted, total) => {
+                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName });
+                    setDedupResult(`正在删除 ${deleted}/${total} 条已勾选记忆…`);
+                },
             });
             const remotePart = result.remoteAttempted ? `，云端向量删除 ${result.remoteDeleted} 条` : '';
             const failPart = result.failed.length > 0 ? `；${result.failed.length} 条删除失败` : '';
             setDedupResult(
                 `${result.failed.length > 0 ? '[warn]' : '[ok]'}AI 语义去重：删除 ${result.deleted}/${result.duplicateCount} 条已勾选重复记忆${remotePart}${failPart}`
             );
+            addToast(`${scanScope.ownerName} 的 AI 候选删除完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success');
             setDedupReviewPreview(null);
             setDedupSelectedDeleteIds(new Set());
             await loadStats();
         } catch (e: any) {
             setDedupResult(`[err]删除失败：${e?.message || e}`);
         } finally {
+            setDedupProgress(null);
             setDeduping(false);
         }
     };
@@ -4391,35 +4406,19 @@ create table if not exists memory_vectors (
                 </div>
                 </>)}
 
-                {/* 维护工具：完整精确去重 */}
-                {isGlobal && (
+                {/* 当前角色维护工具：记忆去重 */}
+                {!isGlobal && char && (
                 <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 16, padding: 16, border: '1px solid #cbd5e1' }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Icon name="search" size={14} />
                         <span>维护工具：记忆去重</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, lineHeight: 1.7 }}>
-                        先选择要扫描的角色，再选择去重方式。扫描边界始终是<b>同一角色内部</b>，
+                        当前只扫描 <b>{char.name}</b> 的记忆宫殿，不会扫所有角色。扫描边界始终是<b>同一角色内部</b>，
                         删除前一定会先让你确认；删除时会同步清理本地向量、关联和事件盒引用。
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10, marginBottom: 12 }}>
-                        <div>
-                            <label className={labelClass}>扫描角色</label>
-                            <select
-                                value={dedupTargetCharId}
-                                onChange={e => setDedupTargetCharId(e.target.value)}
-                                className={inputClass}
-                                style={{ fontFamily: 'inherit' }}
-                                disabled={deduping}
-                            >
-                                <option value={DEDUP_ALL_CHARS}>所有角色</option>
-                                {characters.map(c => (
-                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                ))}
-                            </select>
-                        </div>
-
                         <div>
                             <label className={labelClass}>扫描方式</label>
                             <div style={{
@@ -4497,6 +4496,37 @@ create table if not exists memory_vectors (
                             color: dedupResult.startsWith('[err]') ? '#dc2626' : dedupResult.startsWith('[warn]') ? '#d97706' : dedupResult.startsWith('[ok]') ? '#166534' : '#64748b',
                         }}>
                             <StatusMessage msg={dedupResult} />
+                        </div>
+                    )}
+
+                    {dedupProgress && (
+                        <div style={{
+                            marginBottom: 10, padding: 10, borderRadius: 12,
+                            background: '#eef2ff', border: '1px solid #c7d2fe',
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
+                                <span style={{ fontSize: 11, fontWeight: 800, color: '#3730a3' }}>
+                                    {dedupProgress.label}
+                                </span>
+                                <span style={{ fontSize: 10, fontWeight: 800, color: '#4f46e5' }}>
+                                    {dedupProgress.done}/{dedupProgress.total}
+                                </span>
+                            </div>
+                            <div style={{ height: 7, borderRadius: 999, overflow: 'hidden', background: '#e0e7ff' }}>
+                                <div style={{
+                                    width: `${Math.max(8, Math.min(100, Math.round((dedupProgress.done / Math.max(1, dedupProgress.total)) * 100)))}%`,
+                                    height: '100%', borderRadius: 999,
+                                    background: 'linear-gradient(90deg, #6366f1, #0ea5e9)',
+                                    transition: 'width 180ms ease',
+                                }} />
+                            </div>
+                            {deduping && (
+                                <div style={{ fontSize: 10, color: '#6366f1', marginTop: 7, lineHeight: 1.5 }}>
+                                    {dedupMode === 'ai'
+                                        ? 'AI 扫描要等模型回复，可以先去做别的；完成后会弹出提醒。'
+                                        : '正在处理当前角色的记忆；完成后会弹出提醒。'}
+                                </div>
+                            )}
                         </div>
                     )}
 

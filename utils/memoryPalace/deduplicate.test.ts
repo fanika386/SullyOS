@@ -5,6 +5,7 @@ import {
     buildAiDuplicatePreviewFromSuggestions,
     buildAiMergedMemoryDraftFromResponse,
     findExactDuplicateMemoryGroups,
+    resolveCharacterDedupScanScope,
     scanSemanticDuplicateMemories,
 } from './deduplicate';
 import type { EventBox, MemoryLink, MemoryNode, MemoryVector } from './types';
@@ -347,5 +348,13 @@ describe('记忆宫殿全局精确去重', () => {
         expect(draft.mood).toBe('peaceful');
         expect(draft.sourceIds).toEqual(['dedup_merge_a', 'dedup_merge_b']);
         expect(draft.reason).toBe('去掉重复表达，保留透明伞细节。');
+    });
+
+    it('单角色维护入口只解析当前角色作为扫描范围', () => {
+        const scope = resolveCharacterDedupScanScope({ id: 'dedup_scope_char', name: '小满' });
+
+        expect(scope.charIds).toEqual(['dedup_scope_char']);
+        expect(scope.scopeLabel).toBe('【小满】');
+        expect(scope.ownerName).toBe('小满');
     });
 });
