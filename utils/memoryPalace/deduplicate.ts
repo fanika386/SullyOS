@@ -36,11 +36,13 @@ export interface ExactDuplicateDeletionResult extends ExactDuplicateMemoryPrevie
 
 export interface ExactDuplicateScanOptions {
     charIds?: string[];
+    onStep?: (label: string) => void;
 }
 
 export interface SemanticDuplicateScanOptions extends ExactDuplicateScanOptions {
     threshold?: number;
     minContentLength?: number;
+    onProgress?: (completed: number, total: number, charId: string) => void;
 }
 
 export interface AiDuplicateLLMConfig {
@@ -76,6 +78,7 @@ export interface CharacterDedupScanScope {
 export interface ExactDuplicateDeletionOptions {
     remoteConfig?: RemoteVectorConfig;
     onProgress?: (deleted: number, total: number) => void;
+    onStep?: (label: string) => void;
 }
 
 interface AiRawDuplicateGroup {
@@ -241,9 +244,11 @@ export function findExactDuplicateMemoryGroups(nodes: MemoryNode[]): ExactDuplic
 export async function scanExactDuplicateMemories(
     options: ExactDuplicateScanOptions = {},
 ): Promise<ExactDuplicateMemoryPreview> {
+    options.onStep?.('正在读取全部记忆节点…');
     const allNodes = await MemoryNodeDB.getAll();
     const allowed = options.charIds?.length ? new Set(options.charIds) : null;
     const nodes = allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes;
+    options.onStep?.('正在按正文比对重复…');
     return findExactDuplicateMemoryGroups(nodes);
 }
 
@@ -284,6 +289,7 @@ export async function scanSemanticDuplicateMemories(
 ): Promise<ExactDuplicateMemoryPreview> {
     const threshold = options.threshold ?? 0.96;
     const minContentLength = options.minContentLength ?? 8;
+    options.onStep?.('正在读取全部记忆节点…');
     const allNodes = await MemoryNodeDB.getAll();
     const allowed = options.charIds?.length ? new Set(options.charIds) : null;
     const nodes = allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes;
@@ -297,14 +303,22 @@ export async function scanSemanticDuplicateMemories(
 
     const groups: ExactDuplicateMemoryGroup[] = [];
     let vectorizedCount = 0;
+    let completed = 0;
+    const totalChars = nodesByChar.size;
+    options.onStep?.('正在读取向量并计算相似度…');
 
     for (const [charId, charNodes] of nodesByChar) {
+        options.onStep?.(`正在比对 ${completed + 1}/${totalChars} 个角色的向量…`);
         const vectors = vectorByMemoryId(await MemoryVectorDB.getAllByCharId(charId));
         const candidates = charNodes.filter(node =>
             vectors.has(node.id) && hasComparableContent(node, minContentLength)
         );
         vectorizedCount += candidates.length;
-        if (candidates.length < 2) continue;
+        if (candidates.length < 2) {
+            completed++;
+            options.onProgress?.(completed, totalChars, charId);
+            continue;
+        }
 
         const dsu = new DisjointSet();
         for (const node of candidates) dsu.add(node.id);
@@ -353,8 +367,11 @@ export async function scanSemanticDuplicateMemories(
                 maxSimilarity,
             });
         }
+        completed++;
+        options.onProgress?.(completed, totalChars, charId);
     }
 
+    options.onStep?.('正在汇总重复分组…');
     groups.sort((a, b) => {
         if (a.charId !== b.charId) return a.charId.localeCompare(b.charId);
         return a.keep.createdAt - b.keep.createdAt;
@@ -765,6 +782,7 @@ export async function scanAiSemanticDuplicateMemories(
     }
 
     const minContentLength = options.minContentLength ?? 4;
+    options.onStep?.('正在读取全部记忆节点…');
     const allNodes = await MemoryNodeDB.getAll();
     const allowed = options.charIds?.length ? new Set(options.charIds) : null;
     const nodes = (allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes)
@@ -778,6 +796,7 @@ export async function scanAiSemanticDuplicateMemories(
     }
 
     const charBatches = Array.from(nodesByChar.entries()).filter(([, charNodes]) => charNodes.length >= 2);
+    options.onStep?.(charBatches.length > 0 ? '正在调用 AI 逐角色扫描…' : '正在汇总 AI 候选…');
     const groups: ExactDuplicateMemoryGroup[] = [];
     let completed = 0;
 
@@ -796,6 +815,7 @@ export async function scanAiSemanticDuplicateMemories(
         options.onProgress?.(completed, charBatches.length, charId);
     }
 
+    options.onStep?.('正在汇总 AI 候选…');
     groups.sort((a, b) => {
         if (a.charId !== b.charId) return a.charId.localeCompare(b.charId);
         return a.keep.createdAt - b.keep.createdAt;
@@ -837,6 +857,7 @@ export async function applyExactDuplicateMemoryDeletion(
     preview: ExactDuplicateMemoryPreview,
     options: ExactDuplicateDeletionOptions = {},
 ): Promise<ExactDuplicateDeletionResult> {
+    options.onStep?.('正在准备删除清单…');
     const idsToDelete: string[] = [];
     const seen = new Set<string>();
     for (const group of preview.groups) {
@@ -851,6 +872,7 @@ export async function applyExactDuplicateMemoryDeletion(
     let remoteDeleted = 0;
     const failed: Array<{ id: string; error: string }> = [];
 
+    options.onStep?.('正在删除重复记忆…');
     for (const id of idsToDelete) {
         try {
             const result = await deleteMemoryNodeCascade(id, options.remoteConfig);
@@ -862,6 +884,7 @@ export async function applyExactDuplicateMemoryDeletion(
         }
     }
 
+    options.onStep?.('正在更新本地索引…');
     return {
         ...preview,
         deleted,

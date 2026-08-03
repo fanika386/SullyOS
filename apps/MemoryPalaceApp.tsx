@@ -550,7 +550,7 @@ export default function MemoryPalaceApp() {
     const [dedupAiApiSource, setDedupAiApiSource] = useState<string>(DEDUP_AI_SOURCE_MEMORY);
     const [dedupReviewPreview, setDedupReviewPreview] = useState<ExactDuplicateMemoryPreview | null>(null);
     const [dedupSelectedDeleteIds, setDedupSelectedDeleteIds] = useState<Set<string>>(new Set());
-    const [dedupProgress, setDedupProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+    const [dedupProgress, setDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
     const [dedupMergingGroupKey, setDedupMergingGroupKey] = useState<string | null>(null);
     const [dedupMergeDraft, setDedupMergeDraft] = useState<{
         groupKey: string;
@@ -1808,7 +1808,7 @@ export default function MemoryPalaceApp() {
         setDeduping(true);
         setDedupReviewPreview(null);
         setDedupSelectedDeleteIds(new Set());
-        setDedupProgress({ done: 0, total: 1, label: scanScope.ownerName });
+        setDedupProgress({ done: 0, total: 1, label: scanScope.ownerName, step: '正在读取记忆节点…' });
         setDedupResult(`正在扫描${scopeLabel}的记忆节点…`);
         try {
             if (dedupMode === 'ai') {
@@ -1824,9 +1824,10 @@ export default function MemoryPalaceApp() {
                     charIds: scanCharIds,
                     llmConfig: aiConfig.config,
                     charNameById,
+                    onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
                     onProgress: (completed, total, charId) => {
                         const owner = charNameById[charId] || charId;
-                        setDedupProgress({ done: completed, total, label: owner });
+                        setDedupProgress({ done: completed, total, label: owner, step: `AI 正在扫描 ${completed}/${total} 个角色：${owner}…` });
                         setDedupResult(`AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`);
                     },
                 });
@@ -1844,12 +1845,21 @@ export default function MemoryPalaceApp() {
                 return;
             }
 
+            const nameById = new Map(characters.map(c => [c.id, c.name]));
             const preview = dedupMode === 'semantic'
                 ? await scanSemanticDuplicateMemories({
                     charIds: scanCharIds,
                     threshold: SEMANTIC_DEDUP_THRESHOLD,
+                    onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
+                    onProgress: (completed, total, charId) => {
+                        const owner = nameById.get(charId) || charId;
+                        setDedupProgress({ done: completed, total, label: owner, step: `正在比对向量 ${completed}/${total} 个角色：${owner}…` });
+                    },
                 })
-                : await scanExactDuplicateMemories({ charIds: scanCharIds });
+                : await scanExactDuplicateMemories({
+                    charIds: scanCharIds,
+                    onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
+                });
 
             if (preview.duplicateCount === 0) {
                 const vectorPart = dedupMode === 'semantic'
@@ -1860,7 +1870,6 @@ export default function MemoryPalaceApp() {
                 return;
             }
 
-            const nameById = new Map(characters.map(c => [c.id, c.name]));
             const sample = preview.groups.slice(0, 5).map((group, idx) => {
                 const owner = nameById.get(group.charId) || group.charId;
                 const text = group.content.length > 48 ? `${group.content.slice(0, 48)}…` : group.content;
@@ -1893,8 +1902,9 @@ export default function MemoryPalaceApp() {
 
             const result = await applyExactDuplicateMemoryDeletion(preview, {
                 remoteConfig: remoteVectorConfig,
+                onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
                 onProgress: (deleted, total) => {
-                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName });
+                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName, step: `正在删除重复记忆 ${deleted}/${total} 条…` });
                     setDedupResult(`正在删除 ${deleted}/${total} 条重复记忆…`);
                 },
             });
@@ -1941,8 +1951,9 @@ export default function MemoryPalaceApp() {
         try {
             const result = await applyExactDuplicateMemoryDeletion(selectedPreview, {
                 remoteConfig: remoteVectorConfig,
+                onStep: (step) => setDedupProgress(p => (p ? { ...p, step } : p)),
                 onProgress: (deleted, total) => {
-                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName });
+                    setDedupProgress({ done: deleted, total, label: scanScope.ownerName, step: `正在删除 ${deleted}/${total} 条已勾选记忆…` });
                     setDedupResult(`正在删除 ${deleted}/${total} 条已勾选记忆…`);
                 },
             });
@@ -4547,6 +4558,12 @@ create table if not exists memory_vectors (
                                     transition: 'width 180ms ease',
                                 }} />
                             </div>
+                            {dedupProgress.step && (
+                                <div style={{ fontSize: 11, color: '#3730a3', marginTop: 7, lineHeight: 1.55, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                                    <span className="animate-dot-pulse" style={{ width: 6, height: 6, borderRadius: 999, background: '#6366f1', marginTop: 4, flexShrink: 0 }} />
+                                    <span>{dedupProgress.step}</span>
+                                </div>
+                            )}
                             {deduping && (
                                 <div style={{ fontSize: 10, color: '#6366f1', marginTop: 7, lineHeight: 1.5 }}>
                                     {dedupMode === 'ai'
