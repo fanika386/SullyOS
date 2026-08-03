@@ -83,6 +83,17 @@ export function getMemoryPalaceAutoSummaryThreshold(): number {
         return DEFAULT_AUTO_SUMMARY_THRESHOLD;
     }
 }
+
+export function getAutoSummaryThresholdHint(threshold: number | string): string {
+    const value = normalizeAutoSummaryThreshold(threshold);
+    if (value <= 100) {
+        return '数字小：触发更快，但副 API 调用更频繁，短片段更容易被拆散，也更容易出现重复感。';
+    }
+    if (value <= 300) {
+        return '数字适中：更新速度和长段完整性比较均衡。';
+    }
+    return '数字大：更省调用、长段上下文更完整，但新内容进记忆更慢，未触发前清空聊天风险更高。';
+}
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
 import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMessagesToSpikes } from './relatedMemories';

@@ -2852,7 +2852,6 @@ const Chat: React.FC = () => {
                 memoryPalaceAutoSummaryThreshold={memoryPalaceConfig.autoSummaryThreshold}
                 onSaveMemoryPalaceAutoSummaryThreshold={(threshold) => {
                     updateMemoryPalaceConfig({ autoSummaryThreshold: threshold });
-                    addToast('记忆宫殿自动总结触发条数已保存', 'success');
                 }}
                 onForceVectorize={handleForceVectorize}
                 apiPresets={apiPresets}

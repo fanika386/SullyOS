@@ -9,6 +9,7 @@ import {
     DEFAULT_AUTO_SUMMARY_THRESHOLD,
     MAX_AUTO_SUMMARY_THRESHOLD,
     MIN_AUTO_SUMMARY_THRESHOLD,
+    getAutoSummaryThresholdHint,
     normalizeAutoSummaryThreshold,
 } from '../../utils/memoryPalace';
 
@@ -262,18 +263,16 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         memoryPalaceAutoSummaryThreshold ?? DEFAULT_AUTO_SUMMARY_THRESHOLD,
     );
     const [autoSummaryThresholdInput, setAutoSummaryThresholdInput] = useState(String(normalizedAutoSummaryThreshold));
-    const [autoSummarySaved, setAutoSummarySaved] = useState(false);
 
     useEffect(() => {
         setAutoSummaryThresholdInput(String(normalizedAutoSummaryThreshold));
     }, [normalizedAutoSummaryThreshold]);
 
-    const handleSaveAutoSummaryThreshold = () => {
+    const handleSaveSettings = () => {
         const threshold = normalizeAutoSummaryThreshold(autoSummaryThresholdInput);
         setAutoSummaryThresholdInput(String(threshold));
         onSaveMemoryPalaceAutoSummaryThreshold?.(threshold);
-        setAutoSummarySaved(true);
-        window.setTimeout(() => setAutoSummarySaved(false), 1800);
+        onSaveSettings();
     };
 
     const startHistoryLongPress = (msgId: number) => {
@@ -396,7 +395,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             <Modal 
                 isOpen={modalType === 'chat-settings'} title="聊天设置" onClose={() => setModalType('none')}
-                footer={<button onClick={onSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
+                footer={<button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
             >
                 <div className="space-y-6">
                      <div>
@@ -541,29 +540,27 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                              <div className="mb-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
                                  <div className="flex items-center justify-between gap-2 mb-2">
                                      <label className="text-xs font-bold text-emerald-700 uppercase">自动总结触发条数</label>
-                                     <span className="text-[10px] text-emerald-700/70">默认 {DEFAULT_AUTO_SUMMARY_THRESHOLD}</span>
+                                     <span className="text-[10px] text-emerald-700/70">当前 {autoSummaryThresholdInput} 条</span>
                                  </div>
-                                 <div className="flex gap-2">
-                                     <input
-                                         type="number"
-                                         min={MIN_AUTO_SUMMARY_THRESHOLD}
-                                         max={MAX_AUTO_SUMMARY_THRESHOLD}
-                                         step={10}
-                                         value={autoSummaryThresholdInput}
-                                         onChange={e => setAutoSummaryThresholdInput(e.target.value)}
-                                         className="min-w-0 flex-1 rounded-xl border border-emerald-100 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:border-emerald-300"
-                                     />
-                                     <button
-                                         type="button"
-                                         onClick={handleSaveAutoSummaryThreshold}
-                                         disabled={!onSaveMemoryPalaceAutoSummaryThreshold}
-                                         className="shrink-0 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
-                                     >
-                                         {autoSummarySaved ? '已保存' : '保存'}
-                                     </button>
+                                 <input
+                                     type="range"
+                                     min={MIN_AUTO_SUMMARY_THRESHOLD}
+                                     max={MAX_AUTO_SUMMARY_THRESHOLD}
+                                     step={10}
+                                     value={autoSummaryThresholdInput}
+                                     onChange={e => setAutoSummaryThresholdInput(e.target.value)}
+                                     className="w-full h-2 bg-emerald-100 rounded-full appearance-none accent-emerald-500"
+                                 />
+                                 <div className="flex justify-between text-[10px] text-emerald-700/70 mt-1">
+                                     <span>{MIN_AUTO_SUMMARY_THRESHOLD} · 更快更新</span>
+                                     <span>{DEFAULT_AUTO_SUMMARY_THRESHOLD} · 默认</span>
+                                     <span>{MAX_AUTO_SUMMARY_THRESHOLD} · 更省调用</span>
                                  </div>
                                  <p className="text-[10px] text-emerald-800/70 mt-2 leading-relaxed">
-                                     范围 {MIN_AUTO_SUMMARY_THRESHOLD}-{MAX_AUTO_SUMMARY_THRESHOLD}。数字小：更新更快，但副 API 调用更频繁，短碎片更容易拆散和重复。数字大：更省调用，长段更完整，但新内容进记忆更慢，没触发前清空聊天风险更高。
+                                     {getAutoSummaryThresholdHint(autoSummaryThresholdInput)}
+                                 </p>
+                                 <p className="text-[10px] text-emerald-800/60 mt-1">
+                                     点底部「保存设置」后，下一次自动总结立即按这个条数判断。
                                  </p>
                              </div>
                              <button

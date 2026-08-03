@@ -46,7 +46,7 @@ export {
     retrieveMemories, injectMemoryPalace, processNewMessages,
     getMemoryPalaceHighWaterMark, ingestDiaryToPalace,
     DEFAULT_AUTO_SUMMARY_THRESHOLD, MIN_AUTO_SUMMARY_THRESHOLD, MAX_AUTO_SUMMARY_THRESHOLD,
-    getMemoryPalaceAutoSummaryThreshold, normalizeAutoSummaryThreshold,
+    getMemoryPalaceAutoSummaryThreshold, getAutoSummaryThresholdHint, normalizeAutoSummaryThreshold,
 } from './pipeline';
 
 // 期盼
