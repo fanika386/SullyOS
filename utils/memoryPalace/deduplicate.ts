@@ -662,7 +662,7 @@ ${JSON.stringify(payload, null, 2)}`;
         },
         1,
         180_000,
-        { appName: '记忆宫殿', purpose: 'AI记忆合并整理', characterId: charId },
+        { appName: '记忆宫殿', purpose: 'AI记忆合并整理', charId },
     );
 
     const reply = data.choices?.[0]?.message?.content || '';
@@ -745,7 +745,7 @@ ${JSON.stringify(payload, null, 2)}`;
         },
         1,
         180_000,
-        { appName: '记忆宫殿', purpose: 'AI语义去重扫描', characterId: charId },
+        { appName: '记忆宫殿', purpose: 'AI语义去重扫描', charId },
     );
 
     const reply = data.choices?.[0]?.message?.content || '';
