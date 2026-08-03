@@ -1721,8 +1721,8 @@ export default function MemoryPalaceApp() {
                 }
 
                 setDedupReviewPreview(preview);
-                setDedupSelectedDeleteIds(collectDedupDuplicateIds(preview));
-                setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。请在下方勾选后再删除。`);
+                setDedupSelectedDeleteIds(new Set());
+                setDedupResult(`[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。AI 候选默认不勾选，请逐条确认后再删除。`);
                 return;
             }
 
@@ -4368,7 +4368,7 @@ create table if not exists memory_vectors (
                                 <div style={{ fontSize: 10, color: '#9a3412', lineHeight: 1.7, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
                                     <span style={{ marginTop: 1, flexShrink: 0 }}><Icon name="warning" size={12} /></span>
                                     <span>
-                                        注意，这里会花一点 API 钱哦。建议选便宜、中文还可以的模型；它只是帮你扫重复建议，不需要昂贵对话模型。
+                                        注意，这里会花一点 API 钱哦。建议选便宜、中文还可以的模型；它只是帮你做保守审核，不需要昂贵对话模型。AI 候选默认不勾选，避免顺手误删。
                                     </span>
                                 </div>
                             </div>
@@ -4396,7 +4396,7 @@ create table if not exists memory_vectors (
                                 <div>
                                     <div style={{ fontSize: 12, fontWeight: 800, color: '#334155' }}>AI 候选审核</div>
                                     <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
-                                        已勾选 {dedupSelectedDeleteIds.size}/{dedupReviewPreview.duplicateCount} 条建议删除项
+                                        默认不勾选 · 已选择 {dedupSelectedDeleteIds.size}/{dedupReviewPreview.duplicateCount} 条
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>

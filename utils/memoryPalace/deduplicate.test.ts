@@ -179,9 +179,25 @@ describe('记忆宫殿全局精确去重', () => {
         const preview = buildAiDuplicatePreviewFromSuggestions(nodes, {
             groups: [{
                 keepId: 'dedup_ai_keep',
-                duplicateIds: ['dedup_ai_dup', 'dedup_ai_missing', 'dedup_ai_other_char'],
+                ids: ['dedup_ai_keep', 'dedup_ai_dup', 'dedup_ai_missing', 'dedup_ai_other_char'],
+                duplicates: [{
+                    id: 'dedup_ai_dup',
+                    verdict: 'exact_duplicate',
+                    reason: '两条都只表达同一个雨天海边散步偏好。',
+                    lostIfDeleted: [],
+                    confidence: 0.94,
+                }, {
+                    id: 'dedup_ai_missing',
+                    verdict: 'exact_duplicate',
+                    lostIfDeleted: [],
+                    confidence: 0.98,
+                }, {
+                    id: 'dedup_ai_other_char',
+                    verdict: 'exact_duplicate',
+                    lostIfDeleted: [],
+                    confidence: 0.98,
+                }],
                 reason: '两条都只表达同一个雨天海边散步偏好。',
-                confidence: 1.2,
             }],
         });
 
@@ -192,7 +208,7 @@ describe('记忆宫殿全局精确去重', () => {
         expect(preview.groups[0].keep.id).toBe('dedup_ai_keep');
         expect(preview.groups[0].duplicates.map(n => n.id)).toEqual(['dedup_ai_dup']);
         expect(preview.groups[0].aiReason).toBe('两条都只表达同一个雨天海边散步偏好。');
-        expect(preview.groups[0].confidence).toBe(1);
+        expect(preview.groups[0].confidence).toBe(0.94);
     });
 
     it('AI 建议没有有效 keepId 时按本地保留规则选择 canonical 记忆', () => {
@@ -213,14 +229,58 @@ describe('记忆宫殿全局精确去重', () => {
             groups: [{
                 ids: ['dedup_ai_late', 'dedup_ai_important'],
                 keepId: 'dedup_ai_missing',
+                duplicates: [{
+                    id: 'dedup_ai_late',
+                    verdict: 'exact_duplicate',
+                    lostIfDeleted: [],
+                    confidence: 0.95,
+                }],
                 reason: '同一个被冷落的担忧。',
-                confidence: 0.76,
             }],
         });
 
         expect(preview.groups).toHaveLength(1);
         expect(preview.groups[0].keep.id).toBe('dedup_ai_important');
         expect(preview.groups[0].duplicates.map(n => n.id)).toEqual(['dedup_ai_late']);
-        expect(preview.groups[0].confidence).toBe(0.76);
+        expect(preview.groups[0].confidence).toBe(0.95);
+    });
+
+    it('AI 候选承认会丢失新增信息或置信度不足时不进入删除预览', () => {
+        const nodes = [
+            makeNode('dedup_ai_base', 'dedup_ai_char_d', {
+                content: 'TA 喜欢雨天去海边。',
+                createdAt: 1000,
+            }),
+            makeNode('dedup_ai_has_detail', 'dedup_ai_char_d', {
+                content: 'TA 喜欢雨天去海边，还想带一把透明伞。',
+                createdAt: 2000,
+            }),
+            makeNode('dedup_ai_low_conf', 'dedup_ai_char_d', {
+                content: 'TA 也许会喜欢雨天去海边。',
+                createdAt: 3000,
+            }),
+        ];
+
+        const preview = buildAiDuplicatePreviewFromSuggestions(nodes, {
+            groups: [{
+                keepId: 'dedup_ai_base',
+                ids: ['dedup_ai_base', 'dedup_ai_has_detail', 'dedup_ai_low_conf'],
+                duplicates: [{
+                    id: 'dedup_ai_has_detail',
+                    verdict: 'exact_duplicate',
+                    reason: '大体都在说雨天海边。',
+                    lostIfDeleted: ['想带透明伞'],
+                    confidence: 0.99,
+                }, {
+                    id: 'dedup_ai_low_conf',
+                    verdict: 'exact_duplicate',
+                    lostIfDeleted: [],
+                    confidence: 0.71,
+                }],
+            }],
+        });
+
+        expect(preview.groups).toEqual([]);
+        expect(preview.duplicateCount).toBe(0);
     });
 });

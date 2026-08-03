@@ -52,6 +52,7 @@ export interface AiSemanticDuplicateScanOptions extends ExactDuplicateScanOption
     llmConfig: AiDuplicateLLMConfig;
     charNameById?: Record<string, string>;
     minContentLength?: number;
+    minConfidence?: number;
     onProgress?: (completed: number, total: number, charId: string) => void;
 }
 
@@ -71,6 +72,26 @@ interface AiRawDuplicateGroup {
     reason?: unknown;
     confidence?: unknown;
 }
+
+interface AiRawDuplicateCandidate {
+    id?: unknown;
+    memoryId?: unknown;
+    nodeId?: unknown;
+    verdict?: unknown;
+    reason?: unknown;
+    confidence?: unknown;
+    lostIfDeleted?: unknown;
+    uniqueInfoLost?: unknown;
+    newInformation?: unknown;
+}
+
+interface AiAcceptedDuplicateCandidate {
+    id: string;
+    reason?: string;
+    confidence: number;
+}
+
+const DEFAULT_AI_DUPLICATE_MIN_CONFIDENCE = 0.92;
 
 function duplicateContentKey(content: string): string {
     return (content || '').trim();
@@ -325,21 +346,77 @@ function uniqueExistingNodes(ids: string[], byId: Map<string, MemoryNode>): Memo
     return nodes;
 }
 
+function normalizeAiVerdict(value: unknown): string {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function hasLostInformation(value: unknown): boolean {
+    if (Array.isArray(value)) {
+        return value.some(item => {
+            if (typeof item === 'string') return !!item.trim();
+            return item != null;
+        });
+    }
+    if (typeof value === 'string') return !!value.trim();
+    if (value == null) return false;
+    return true;
+}
+
+function getCandidateId(candidate: AiRawDuplicateCandidate): string | null {
+    return asCleanId(candidate.id) || asCleanId(candidate.memoryId) || asCleanId(candidate.nodeId);
+}
+
+function getAcceptedAiDuplicateCandidates(
+    rawGroup: AiRawDuplicateGroup,
+    minConfidence: number,
+): AiAcceptedDuplicateCandidate[] {
+    const accepted: AiAcceptedDuplicateCandidate[] = [];
+    const arrays = [rawGroup.duplicates, rawGroup.duplicateIds];
+
+    for (const value of arrays) {
+        if (!Array.isArray(value)) continue;
+        for (const item of value) {
+            if (!item || typeof item !== 'object') continue;
+            const candidate = item as AiRawDuplicateCandidate;
+            const id = getCandidateId(candidate);
+            if (!id) continue;
+
+            const verdict = normalizeAiVerdict(candidate.verdict);
+            if (verdict !== 'exact_duplicate') continue;
+
+            const confidence = clampConfidence(candidate.confidence) ?? clampConfidence(rawGroup.confidence);
+            if (confidence == null || confidence < minConfidence) continue;
+
+            if (candidate.newInformation === true) continue;
+            if (hasLostInformation(candidate.lostIfDeleted) || hasLostInformation(candidate.uniqueInfoLost)) continue;
+
+            const reason = typeof candidate.reason === 'string' ? candidate.reason.trim() : undefined;
+            accepted.push({ id, reason: reason || undefined, confidence });
+        }
+    }
+
+    return accepted;
+}
+
 export function buildAiDuplicatePreviewFromSuggestions(
     nodes: MemoryNode[],
     rawSuggestions: unknown,
+    options: { minConfidence?: number } = {},
 ): ExactDuplicateMemoryPreview {
     const byId = new Map(nodes.map(node => [node.id, node]));
     const charIds = new Set(nodes.map(node => node.charId));
     const usedDuplicateIds = new Set<string>();
     const groups: ExactDuplicateMemoryGroup[] = [];
+    const minConfidence = options.minConfidence ?? DEFAULT_AI_DUPLICATE_MIN_CONFIDENCE;
 
     for (const rawGroup of getAiRawGroups(rawSuggestions)) {
         const keepId = asCleanId(rawGroup.keepId) || asCleanId(rawGroup.canonicalId);
+        const acceptedCandidates = getAcceptedAiDuplicateCandidates(rawGroup, minConfidence);
+        if (acceptedCandidates.length === 0) continue;
+
         const ids = [
             ...(keepId ? [keepId] : []),
-            ...asIdList(rawGroup.duplicateIds),
-            ...asIdList(rawGroup.duplicates),
+            ...acceptedCandidates.map(candidate => candidate.id),
             ...asIdList(rawGroup.ids),
             ...asIdList(rawGroup.memoryIds),
             ...asIdList(rawGroup.nodeIds),
@@ -364,21 +441,28 @@ export function buildAiDuplicatePreviewFromSuggestions(
             sameCharNodes = sameCharNodes.filter(node => node.charId === keep!.charId);
         }
 
+        const acceptedById = new Map(acceptedCandidates.map(candidate => [candidate.id, candidate]));
         const duplicates = sameCharNodes
-            .filter(node => node.id !== keep!.id && !usedDuplicateIds.has(node.id))
+            .filter(node => node.id !== keep!.id && acceptedById.has(node.id) && !usedDuplicateIds.has(node.id))
             .sort(compareCanonicalNode);
         if (duplicates.length === 0) continue;
 
         for (const node of duplicates) usedDuplicateIds.add(node.id);
         const reason = typeof rawGroup.reason === 'string' ? rawGroup.reason.trim() : undefined;
-        const confidence = clampConfidence(rawGroup.confidence);
+        const confidence = duplicates.reduce((min, node) => {
+            const c = acceptedById.get(node.id)?.confidence ?? 1;
+            return Math.min(min, c);
+        }, 1);
+        const candidateReason = duplicates
+            .map(node => acceptedById.get(node.id)?.reason)
+            .find(Boolean);
         groups.push({
             charId: keep.charId,
             content: duplicateContentKey(keep.content),
             keep,
             duplicates,
             nodes: [keep, ...duplicates],
-            aiReason: reason || undefined,
+            aiReason: reason || candidateReason || undefined,
             confidence,
         });
     }
@@ -415,22 +499,39 @@ async function requestAiDuplicateSuggestions(
         archived: !!node.archived,
     }));
 
-    const systemPrompt = `你是记忆宫殿维护工具里的中文语义去重审计员。
-你的任务是从同一个角色的记忆列表中找出"意义完全相同、只保留一条也不会丢信息"的重复项。
-只标记事实、偏好、承诺、状态完全等价的重复记忆；不要把相似但有新细节、不同时间进展、因果补充、情绪变化的记忆归为重复。
-只能使用用户提供的 id，不要发明 id。跨角色重复不在本次任务中考虑。
+    const systemPrompt = `你是记忆宫殿维护工具里的"误删拦截审核员"，不是整理员。
+你的目标是保护有用记忆：宁可漏掉重复，也不要把有新信息的记忆列为可删。
+
+判定标准：
+1. 只有在 duplicate 的全部原子信息都已经被 keep 覆盖时，才允许 verdict="exact_duplicate"。
+2. 只要 duplicate 比 keep 多出任何新事实、新时间点、因果、承诺、计划、偏好细节、情绪强度、关系变化、对象/地点/数量/条件，就不要列入 duplicates。
+3. "主题相似"、"大体意思接近"、"可以互相补充"、"一个是另一个的进展/解释/例子"都不是重复。
+4. 如果两条互相补充，应该返回空组；不要尝试合并。
+5. 只能使用用户提供的 id，不要发明 id。跨角色重复不在本次任务中考虑。
+
 返回严格 JSON，不要 Markdown，不要解释。格式：
 {
   "groups": [
     {
-      "keepId": "建议保留的记忆 id",
-      "duplicateIds": ["建议删除的重复记忆 id"],
-      "reason": "为什么这些记忆可以视为完全重复",
-      "confidence": 0.0
+      "keepId": "内容最完整、最适合保留的记忆 id",
+      "reason": "整组为什么是零信息损失的完全重复",
+      "duplicates": [
+        {
+          "id": "建议删除的重复记忆 id",
+          "verdict": "exact_duplicate",
+          "confidence": 0.0,
+          "reason": "这条和 keep 完全相同的具体理由",
+          "lostIfDeleted": []
+        }
+      ]
     }
   ]
 }
-confidence 是 0 到 1 的数字。没有重复时返回 {"groups":[]}`;
+规则：
+- duplicates 里的每一项必须 verdict="exact_duplicate"。
+- confidence 必须是 0 到 1 的数字；低于 0.92 的不要返回。
+- lostIfDeleted 必须是空数组 []；只要能写出任何会丢失的点，就不要返回这条。
+- 没有完全重复时返回 {"groups":[]}`;
 
     const userPrompt = `角色：${charName || charId}
 记忆列表 JSON：
@@ -500,7 +601,9 @@ export async function scanAiSemanticDuplicateMemories(
             charNodes,
             llmConfig,
         );
-        const preview = buildAiDuplicatePreviewFromSuggestions(charNodes, raw);
+        const preview = buildAiDuplicatePreviewFromSuggestions(charNodes, raw, {
+            minConfidence: options.minConfidence,
+        });
         groups.push(...preview.groups);
         completed++;
         options.onProgress?.(completed, charBatches.length, charId);
