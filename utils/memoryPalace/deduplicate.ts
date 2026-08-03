@@ -92,9 +92,25 @@ interface AiAcceptedDuplicateCandidate {
 }
 
 const DEFAULT_AI_DUPLICATE_MIN_CONFIDENCE = 0.92;
+const AI_DETAIL_EXTRA_CHARS = 8;
+const AI_DETAIL_EXTRA_RATIO = 1.15;
 
 function duplicateContentKey(content: string): string {
     return (content || '').trim();
+}
+
+function compactSemanticText(content: string): string {
+    return duplicateContentKey(content)
+        .replace(/\s+/g, '')
+        .replace(/[，。！？、,.!?;；:："“”'‘’（）()[\]{}《》<>]/g, '');
+}
+
+function hasMeaningfullyMoreDetail(candidate: MemoryNode, keep: MemoryNode): boolean {
+    const candidateText = compactSemanticText(candidate.content);
+    const keepText = compactSemanticText(keep.content);
+    const extra = candidateText.length - keepText.length;
+    if (extra < AI_DETAIL_EXTRA_CHARS) return false;
+    return candidateText.length >= Math.ceil(Math.max(keepText.length, 1) * AI_DETAIL_EXTRA_RATIO);
 }
 
 function hasComparableContent(node: MemoryNode, minContentLength: number): boolean {
@@ -443,7 +459,12 @@ export function buildAiDuplicatePreviewFromSuggestions(
 
         const acceptedById = new Map(acceptedCandidates.map(candidate => [candidate.id, candidate]));
         const duplicates = sameCharNodes
-            .filter(node => node.id !== keep!.id && acceptedById.has(node.id) && !usedDuplicateIds.has(node.id))
+            .filter(node =>
+                node.id !== keep!.id
+                && acceptedById.has(node.id)
+                && !usedDuplicateIds.has(node.id)
+                && !hasMeaningfullyMoreDetail(node, keep!)
+            )
             .sort(compareCanonicalNode);
         if (duplicates.length === 0) continue;
 
@@ -507,7 +528,8 @@ async function requestAiDuplicateSuggestions(
 2. 只要 duplicate 比 keep 多出任何新事实、新时间点、因果、承诺、计划、偏好细节、情绪强度、关系变化、对象/地点/数量/条件，就不要列入 duplicates。
 3. "主题相似"、"大体意思接近"、"可以互相补充"、"一个是另一个的进展/解释/例子"都不是重复。
 4. 如果两条互相补充，应该返回空组；不要尝试合并。
-5. 只能使用用户提供的 id，不要发明 id。跨角色重复不在本次任务中考虑。
+5. 不要把明显更长、更有细节的记忆放进 duplicates；如果短句和长句重复，只能保留长句、删除短句。
+6. 只能使用用户提供的 id，不要发明 id。跨角色重复不在本次任务中考虑。
 
 返回严格 JSON，不要 Markdown，不要解释。格式：
 {

@@ -283,4 +283,34 @@ describe('记忆宫殿全局精确去重', () => {
         expect(preview.groups).toEqual([]);
         expect(preview.duplicateCount).toBe(0);
     });
+
+    it('AI 把更详细的记忆放进删除候选时，程序也要拦截', () => {
+        const nodes = [
+            makeNode('dedup_ai_short_keep', 'dedup_ai_char_e', {
+                content: 'TA 喜欢雨天去海边。',
+                createdAt: 1000,
+            }),
+            makeNode('dedup_ai_richer_dup', 'dedup_ai_char_e', {
+                content: 'TA 喜欢雨天去海边，还想带一把透明伞，并且说这样会像电影里的场景。',
+                createdAt: 2000,
+            }),
+        ];
+
+        const preview = buildAiDuplicatePreviewFromSuggestions(nodes, {
+            groups: [{
+                keepId: 'dedup_ai_short_keep',
+                ids: ['dedup_ai_short_keep', 'dedup_ai_richer_dup'],
+                duplicates: [{
+                    id: 'dedup_ai_richer_dup',
+                    verdict: 'exact_duplicate',
+                    reason: '都在说雨天去海边。',
+                    lostIfDeleted: [],
+                    confidence: 0.99,
+                }],
+            }],
+        });
+
+        expect(preview.groups).toEqual([]);
+        expect(preview.duplicateCount).toBe(0);
+    });
 });
