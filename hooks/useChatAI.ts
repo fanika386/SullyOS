@@ -26,6 +26,7 @@ import { callLuckinTool } from '../utils/luckinMcpClient';
 import { callMcpTool, getMcpUseNativeTools } from '../utils/mcpClient';
 import { buildMcpOpenAITools, buildMcpRejectedToolsFallbackBody, buildMcpTextFallbackBody, extractTextFakedMcpCalls, formatMcpToolResult, sanitizeMcpLeadInText, shouldRetryMcpWithoutTools, stripTextFakedMcpCalls, type FakedMcpCall } from '../utils/mcpToolBridge';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { shouldInjectScheduleAndEmotion } from '../utils/builtInPromptSettings';
 import {
     isInstantConfigReady,
     sendInstantPushAndAwaitReply,
@@ -522,7 +523,7 @@ export const useChatAI = ({
         const runEvalForPushedChar = async (): Promise<void> => {
             // 双 gate: 跟 line 613 一致 (schedule feature on + emotionConfig enabled).
             // 关掉的话还是要 clear pending, 否则下次 mount 反复尝试.
-            if (!isScheduleFeatureOn(char) || !char.emotionConfig?.enabled) {
+            if (!shouldInjectScheduleAndEmotion(char) || !isScheduleFeatureOn(char) || !char.emotionConfig?.enabled) {
                 try { await ActiveMsgStore.clearPendingEmotionEval(charIdAtMount); } catch { /* ignore */ }
                 return;
             }
@@ -808,7 +809,7 @@ export const useChatAI = ({
             //    - instant 模式: 不在客户端跑, 改把 eval prompt + 副 API 凭据塞进 instant 请求 (emotionEval 字段),
             //      worker 跑完主回复后跑 eval 并推 emotion_update 回来, 客户端 flush 时落 buff —— 这样前端被杀也算数,
             //      且不会跟客户端 eval 双跑双扣费. 见下方 instant 分支 + worker/instant-push + activeMsgRuntime.
-            const emotionEvalEnabled = !!(!promptBuildSkipped && !isEmotionEvalSkipped() && isScheduleFeatureOn(char) && char.emotionConfig?.enabled);
+            const emotionEvalEnabled = !!(!promptBuildSkipped && !isEmotionEvalSkipped() && shouldInjectScheduleAndEmotion(char) && isScheduleFeatureOn(char) && char.emotionConfig?.enabled);
             const instantOn = isInstantConfigReady();
             // 评估跟随全局流式开关（专用情绪 API 自带 stream 字段时以它为准）
             const evalStream: boolean = !!((effectiveApi as any).stream ?? apiConfig.stream ?? false);

@@ -388,6 +388,32 @@ export interface CharacterBuff {
   description?: string;  // 用户可读的简短说明（给用户看的，不是给AI的）
 }
 
+/**
+ * 角色级 SullyOS 内置提示词开关。
+ * undefined 表示沿用旧行为：全部开启。显式 false 才关闭对应作者内置规则。
+ * 角色人设、世界观、世界书、用户档案、记忆库不受这些开关影响。
+ */
+export interface BuiltInPromptSettings {
+  /** 即时通讯风格：口语短句、多气泡、禁止名字/时间戳前缀等。 */
+  chatStyle?: boolean;
+  /** 真实陪伴感：有自己的生活、视角、任性和主动性。 */
+  companionBehavior?: boolean;
+  /** 情绪回应增强：察觉情绪、先稳定再追问、避免模板化安慰。 */
+  emotionalResponse?: boolean;
+  /** 反空话增强：表达底线、细节优先、拒绝万能句。 */
+  antiFiller?: boolean;
+  /** 时间与现实状态：当前时间、时间间隔、天气新闻等实时状态。 */
+  timeAwareness?: boolean;
+  /** 日程 / 情绪 Buff：日程注入、情绪底色、后台情绪评估与 innerState。 */
+  scheduleAndEmotion?: boolean;
+  /** 额外功能提示词：HTML、心象、语音、XHS、Notion/飞书、搜索、点单、MCP 等。 */
+  utilityPrompts?: boolean;
+  /** 末尾钢印：「关于对方的表达」与「回到你自己」。 */
+  recencyTail?: boolean;
+  /** 历史事件转译：把卡片、转账、戳一戳、小游戏等系统事件改写进历史上下文。 */
+  historyEventContext?: boolean;
+}
+
 // 实时上下文配置 - 让AI角色感知真实世界
 export interface RealtimeConfig {
   // 天气配置
@@ -2196,6 +2222,10 @@ export interface CharacterProfile {
   // 让角色强化时间观念、主动匹配现实世界时间。关掉后不再注入这组提示词
   // （注意：历史消息本身仍带时间戳，关掉后弱化程度取决于模型自身理解）。
   timeAwarenessEnabled?: boolean;
+
+  // SullyOS 内置提示词注入开关：默认全部开启；关闭后只影响后续生成的 prompt，
+  // 不删除角色人设、世界书、用户档案、记忆库等 RP 核心材料。
+  builtInPromptSettings?: BuiltInPromptSettings;
 
   // 自定义时区（异国恋 / 角色身处异国等场景）。与「时间感知强化」完全独立、可任意组合：
   // 开启后，注入给该角色的「当前时间 / 消息时间戳 / 夜间判断」都按 customTimezone 折算，

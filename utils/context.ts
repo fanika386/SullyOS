@@ -10,6 +10,11 @@ import {
     type WorldbookScanMessage,
 } from './worldbook';
 import { getUserProfileInstructionText } from './userProfiles';
+import {
+    isBuiltInPromptEnabled,
+    shouldInjectScheduleAndEmotion,
+    shouldInjectTimeAwareness,
+} from './builtInPromptSettings';
 
 /**
  * Memory Central
@@ -288,7 +293,7 @@ export const ContextBuilder = {
         // 放在角色设定之后，使所有调用 ContextBuilder 的 App 都能感知情绪状态
         // 总开关关闭时完全跳过，防止残留 buff 继续污染 prompt
         // deferVolatile：buff 每轮情绪评估后都可能变 → 移交 buildVolatileCoreState。
-        if (!layout?.deferVolatile && isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
+        if (!layout?.deferVolatile && shouldInjectScheduleAndEmotion(char) && isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
             context += `${char.buffInjection}\n\n`;
             console.log(`🎭 [Context] Buff injected for ${char.name}:\n`, char.buffInjection);
             console.log(`🎭 [Context] Active buffs:`, JSON.stringify(char.activeBuffs || [], null, 2));
@@ -302,7 +307,7 @@ export const ContextBuilder = {
         // （去挖具体素材），不列任何禁语——把禁语写进提示词反而会激活它（粉色大象）。
         // 完整方法版在 datePrompts 的 DIG_DEEPER_BLOCK（见面模式专用，可按角色开关）。
         // 群聊流（groupOptions）跳过：多成员场景会重复注入 N 份，群聊侧暂不接入。
-        if (!groupOptions) {
+        if (!groupOptions && isBuiltInPromptEnabled(char, 'antiFiller')) {
             context += `### 表达底线 (Anti-Filler)\n当你觉得"没什么可说"的时候，不要用空泛的感慨、万能句式或华丽排比去填充——那是没话找话，对方一眼就能看出来。素材永远比你以为的多：对方的用词、ta 怎么说的、ta 没说的部分、此刻的情境、你们的过去、你心里闪过的念头——挑一两条往深处走就够了。宁可一个具体的小细节，不要一句谁都能说的话。\n\n`;
         }
 
@@ -333,7 +338,7 @@ export const ContextBuilder = {
         timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean },
     ): string => {
         // skipTimeAwareness：见面纯架空时由调用方传入，彻底抑制时间注入（修「线下时间感知」关掉后仍漏时间）。
-        if (char.timeAwarenessEnabled === false || timeOptions?.skipTimeAwareness) return '';
+        if (!shouldInjectTimeAwareness(char) || timeOptions?.skipTimeAwareness) return '';
         // 自定义时区（异国恋等）：开启后这里的"当前时间"按角色所在时区折算，并附时差提示，
         // 让查手机/人际关系/通话等所有直连 buildCoreContext 的路径都拿到正确的本地时间。
         const charTz = resolveCharTimeZone(char);
@@ -380,7 +385,7 @@ export const ContextBuilder = {
             }
         }
 
-        if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
+        if (shouldInjectScheduleAndEmotion(char) && isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
             context += `${char.buffInjection}\n\n`;
             console.log(`🎭 [Context] Buff injected for ${char.name}:\n`, char.buffInjection);
             console.log(`🎭 [Context] Active buffs:`, JSON.stringify(char.activeBuffs || [], null, 2));

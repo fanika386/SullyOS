@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
+import { BuiltInPromptSettings, CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
@@ -12,6 +12,13 @@ import {
     getAutoSummaryThresholdHint,
     normalizeAutoSummaryThreshold,
 } from '../../utils/memoryPalace';
+import {
+    BUILT_IN_PROMPT_SETTING_DEFINITIONS,
+    DAILY_CHAT_BUILT_IN_PROMPT_PRESET,
+    ROLEPLAY_BUILT_IN_PROMPT_PRESET,
+    normalizeBuiltInPromptSettings,
+    type BuiltInPromptSettingKey,
+} from '../../utils/builtInPromptSettings';
 
 interface ChatModalsProps {
     modalType: string;
@@ -99,6 +106,9 @@ interface ChatModalsProps {
     onToggleHtmlMode?: () => void;
     htmlModeCustomPrompt?: string;
     setHtmlModeCustomPrompt?: (v: string) => void;
+    // Built-in prompt settings
+    builtInPromptSettings?: BuiltInPromptSettings;
+    onUpdateBuiltInPromptSettings?: (patch: Partial<BuiltInPromptSettings>) => void;
     // Voice TTS
     chatVoiceEnabled?: boolean;
     onToggleChatVoice?: () => void;
@@ -240,6 +250,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
+    builtInPromptSettings, onUpdateBuiltInPromptSettings,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
@@ -273,6 +284,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         setAutoSummaryThresholdInput(String(threshold));
         onSaveMemoryPalaceAutoSummaryThreshold?.(threshold);
         onSaveSettings();
+    };
+
+    const builtInPromptValues = normalizeBuiltInPromptSettings(builtInPromptSettings);
+    const setBuiltInPromptValue = (key: BuiltInPromptSettingKey, value: boolean) => {
+        onUpdateBuiltInPromptSettings?.({ [key]: value } as Partial<BuiltInPromptSettings>);
+    };
+    const applyBuiltInPromptPreset = (preset: BuiltInPromptSettings) => {
+        onUpdateBuiltInPromptSettings?.(preset);
     };
 
     const startHistoryLongPress = (msgId: number) => {
@@ -458,6 +477,54 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  </div>
                              </div>
                          )}
+                     </div>
+
+                     {/* Built-in prompt switches */}
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="flex items-center justify-between gap-3">
+                             <div>
+                                 <label className="text-xs font-bold text-slate-400 uppercase block">内置提示词</label>
+                                 <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                                     控制 SullyOS 自带行为规则和功能提示词；角色设定、世界书、用户设定、记忆不会被这里关闭。
+                                 </p>
+                             </div>
+                         </div>
+                         <div className="grid grid-cols-2 gap-2 mt-3">
+                             <button
+                                 type="button"
+                                 onClick={() => applyBuiltInPromptPreset(DAILY_CHAT_BUILT_IN_PROMPT_PRESET)}
+                                 className="py-2 rounded-xl bg-primary/10 text-primary text-[11px] font-bold border border-primary/20 active:scale-95 transition-transform"
+                             >
+                                 日常聊天
+                             </button>
+                             <button
+                                 type="button"
+                                 onClick={() => applyBuiltInPromptPreset(ROLEPLAY_BUILT_IN_PROMPT_PRESET)}
+                                 className="py-2 rounded-xl bg-slate-900 text-white text-[11px] font-bold border border-slate-900 active:scale-95 transition-transform"
+                             >
+                                 纯净 RP
+                             </button>
+                         </div>
+                         <div className="mt-3 space-y-2">
+                             {BUILT_IN_PROMPT_SETTING_DEFINITIONS.map(def => {
+                                 const enabled = builtInPromptValues[def.key];
+                                 return (
+                                     <div
+                                         key={def.key}
+                                         className="flex items-start justify-between gap-3 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 cursor-pointer"
+                                         onClick={() => setBuiltInPromptValue(def.key, !enabled)}
+                                     >
+                                         <div className="min-w-0">
+                                             <div className={`text-[12px] font-bold ${enabled ? 'text-slate-700' : 'text-slate-400'}`}>{def.label}</div>
+                                             <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">{def.description}</p>
+                                         </div>
+                                         <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center shrink-0 ${enabled ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                             <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${enabled ? 'translate-x-4' : ''}`}></div>
+                                         </div>
+                                     </div>
+                                 );
+                             })}
+                         </div>
                      </div>
 
                      {/* XHS Toggle */}

@@ -17,6 +17,12 @@ import { buildLifeRecordInjection } from './lifeRecords';
 import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
 import { getLocalDailySchedule } from './dailySchedule';
+import {
+    isBuiltInPromptEnabled,
+    shouldInjectScheduleAndEmotion,
+    shouldInjectTimeAwareness,
+    shouldInjectUtilityPrompts,
+} from './builtInPromptSettings';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -65,6 +71,113 @@ function summarizeGroupMsgContent(m: Message): string {
             return c.length > GROUP_MSG_TEXT_CAP ? c.slice(0, GROUP_MSG_TEXT_CAP) + '…' : c;
         }
     }
+}
+
+const HISTORY_EVENT_CONTEXT_TYPES = new Set<string>([
+    'interaction',
+    'transfer',
+    'system',
+    'social_card',
+    'chat_forward',
+    'xhs_card',
+    'score_card',
+    'music_card',
+    'mcd_card',
+    'luckin_card',
+    'html_card',
+    'news_card',
+    'vr_card',
+    'trpg_card',
+    'novel_card',
+    'world_card',
+    'sim_card',
+    'phone_card',
+    'webpage_card',
+    'theater_card',
+    'room_card',
+    'life_card',
+    'group_topic_card',
+]);
+
+function shouldKeepHistoryMessageForPrompt(m: Message, char: CharacterProfile): boolean {
+    if (isBuiltInPromptEnabled(char, 'historyEventContext')) return true;
+    return !HISTORY_EVENT_CONTEXT_TYPES.has(String(m.type));
+}
+
+function hasCustomBuiltInPromptSettings(char: CharacterProfile): boolean {
+    const s = char.builtInPromptSettings;
+    return !!s && Object.values(s).some(v => v === false);
+}
+
+function buildReducedChatRules(params: {
+    char: CharacterProfile;
+    userProfile: UserProfile;
+    emojiContextStr: string;
+    searchEnabled: boolean;
+    notionEnabled: boolean;
+    notionNotesEnabled: boolean;
+    feishuEnabled: boolean;
+    xhsEnabled: boolean;
+}): string {
+    const { char, userProfile, emojiContextStr, searchEnabled, notionEnabled, notionNotesEnabled, feishuEnabled, xhsEnabled } = params;
+    const blocks: string[] = [];
+    const chatStyle = isBuiltInPromptEnabled(char, 'chatStyle');
+    const companion = isBuiltInPromptEnabled(char, 'companionBehavior');
+    const emotional = isBuiltInPromptEnabled(char, 'emotionalResponse');
+    const antiFiller = isBuiltInPromptEnabled(char, 'antiFiller');
+    const timeAwareness = shouldInjectTimeAwareness(char);
+    const utility = shouldInjectUtilityPrompts(char);
+
+    if (chatStyle) {
+        blocks.push(`### 聊天 App 行为规范 (Chat App Rules)
+**严格注意，你正在手机聊天。无论之前是什么模式，当前都处于线上聊天状态，请不要输出你的行为。**
+- 保持角色扮演，使用适合即时通讯(IM)的口语化风格。
+- 想分成多条消息气泡时，必须使用真正的换行符（\\n）分隔。
+- 不要在输出中包含时间戳、名字前缀或"[角色名]:"。
+- 不要模仿历史记录中的系统日志格式。`);
+    }
+
+    if (companion) {
+        blocks.push(`### 真实陪伴感
+不要总是围绕用户转。分享你自己的生活、想法或随意的观察；有时候可以任性或以自我为中心一点，具体程度视你的性格而定。`);
+    }
+
+    if (antiFiller || emotional) {
+        const lines: string[] = [];
+        if (antiFiller) {
+            lines.push(`- 拒绝空话：不要用万能安慰句或套话填充。`);
+            lines.push(`- 用细节代替概括：从用户的话、此刻情境、过去记忆、你自己的念头里挑具体素材。`);
+            lines.push(`- 让每句话只有你能说出来：说话要带着你的性格、经历和记忆。`);
+        }
+        if (emotional) {
+            lines.push(`- 情绪回应要有层次，不要套用模板化共情。`);
+            lines.push(`- 情绪感知先于对方明说：从措辞、语气、标点、回复长短里察觉变化。`);
+            lines.push(`- 当对方真的害怕健康、安全或重大变故时，先稳住，再问清楚，最后基于细节安抚。`);
+        }
+        blocks.push(`### 对话质量\n${lines.join('\n')}`);
+    }
+
+    if (timeAwareness) {
+        blocks.push(`### 环境感知
+- 留意系统提示里的当前时间和时间跨度。如果用户消失很久，根据你们的关系自然反应。
+- 如果用户发送了图片，请对图片内容进行评论。`);
+    }
+
+    if (utility) {
+        const lines: string[] = [
+            `- 发送表情包只能使用命令：\`[[SEND_EMOJI: 表情名称]]\`。可用表情库：${emojiContextStr}`,
+            `- 专门回复某句具体的话，可以在回复开头使用：\`[[QUOTE: 引用内容]]\`。`,
+            `- 可用动作：\`[[ACTION:POKE]]\`、\`[[ACTION:TRANSFER:100]]\`、\`[[ACTION:TRANSFER_ACCEPT]]\`、\`[[ACTION:TRANSFER_RETURN]]\`、\`[[RECALL: YYYY-MM]]\`、\`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`、\`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`。`,
+        ];
+        if (notionEnabled) lines.push(`- 可翻阅和写入 Notion 日记：\`[[READ_DIARY: 日期]]\`、\`[[DIARY_START: 标题 | 心情]]...\`。`);
+        if (feishuEnabled) lines.push(`- 可翻阅和写入飞书日记：\`[[FS_READ_DIARY: 日期]]\`、\`[[FS_DIARY_START: 标题 | 心情]]...\`。`);
+        if (notionNotesEnabled) lines.push(`- 可翻阅${userProfile.name}的 Notion 笔记：\`[[READ_NOTE: 标题关键词]]\`。`);
+        if (searchEnabled) lines.push(`- 可主动搜索互联网：\`[[SEARCH: 搜索关键词]]\`。`);
+        if (xhsEnabled) lines.push(`- 可使用小红书：\`[[XHS_SEARCH: 关键词]]\`、\`[[XHS_BROWSE]]\`、\`[[XHS_POST: 标题 | 正文 | #标签]]\`、\`[[XHS_COMMENT: noteId | 评论]]\`、\`[[XHS_LIKE: noteId]]\`、\`[[XHS_FAV: noteId]]\`、\`[[XHS_DETAIL: noteId]]\`、\`[[XHS_REPLY: noteId | commentId | 回复]]\`、\`[[XHS_MY_PROFILE]]\`。操作别人的笔记前必须先搜索/浏览拿到真实 noteId。`);
+        blocks.push(`### 可用功能提示词\n${lines.join('\n')}`);
+    }
+
+    return blocks.length ? `\n${blocks.join('\n\n')}\n` : '';
 }
 
 export const ChatPrompts = {
@@ -234,10 +347,14 @@ export const ChatPrompts = {
         const today = getLocalDateKey();
         // 自定义时区：开启后「当前时间」按角色所在时区折算，并附时差提示（异国恋等场景）
         const charTz = resolveCharTimeZone(char);
+        const utilityPromptsEnabled = shouldInjectUtilityPrompts(char);
+        const timePromptEnabled = shouldInjectTimeAwareness(char);
+        const schedulePromptEnabled = shouldInjectScheduleAndEmotion(char);
 
         // 1. 实时世界信息（天气/新闻/时间）
         const realtimePromise: Promise<string> = (async () => {
             try {
+                if (!timePromptEnabled) return '';
                 if (config.weatherEnabled || config.newsEnabled) {
                     const realtimeContext = await RealtimeContextManager.buildFullContext(config, charTz);
                     return `\n${realtimeContext}\n`;
@@ -257,7 +374,7 @@ export const ChatPrompts = {
 
         // 2. 日程（被"日程注入"和"音乐氛围"两处共用，合并成一次查询）
         //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
-        const scheduleFeatureOn = isScheduleFeatureOn(char);
+        const scheduleFeatureOn = schedulePromptEnabled && isScheduleFeatureOn(char);
         const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
             ? getLocalDailySchedule(char.id).catch(e => {
                 console.error('Failed to load daily schedule:', e);
@@ -311,6 +428,7 @@ ${groupLogStr}\n`;
         // 4. Notion 日记标题
         const notionDiaryPromise: Promise<string> = (async () => {
             try {
+                if (!utilityPromptsEnabled) return '';
                 if (!(config.notionEnabled && config.notionApiKey && config.notionDatabaseId)) return '';
                 const r = await NotionManager.getRecentDiaries(config.notionApiKey, config.notionDatabaseId, char.name, 8);
                 if (!r.success || r.entries.length === 0) return '';
@@ -328,6 +446,7 @@ ${groupLogStr}\n`;
         // 5. 飞书日记标题
         const feishuDiaryPromise: Promise<string> = (async () => {
             try {
+                if (!utilityPromptsEnabled) return '';
                 if (!(config.feishuEnabled && config.feishuAppId && config.feishuAppSecret && config.feishuBaseId && config.feishuTableId)) return '';
                 const r = await FeishuManager.getRecentDiaries(config.feishuAppId, config.feishuAppSecret, config.feishuBaseId, config.feishuTableId, char.name, 8);
                 if (!r.success || r.entries.length === 0) return '';
@@ -345,6 +464,7 @@ ${groupLogStr}\n`;
         // 6. 用户 Notion 笔记标题
         const notionNotesPromise: Promise<string> = (async () => {
             try {
+                if (!utilityPromptsEnabled) return '';
                 if (!(config.notionEnabled && config.notionApiKey && config.notionNotesDatabaseId)) return '';
                 const r = await NotionManager.getUserNotes(config.notionApiKey, config.notionNotesDatabaseId, 5);
                 if (!r.success || r.entries.length === 0) return '';
@@ -360,11 +480,13 @@ ${groupLogStr}\n`;
         })();
 
         // 7. 生活记录（档案 App）注入 — 总开关关闭时 buildLifeRecordInjection 直接返回 ''
-        const lifeRecordPromise: Promise<string> = buildLifeRecordInjection(char, userProfile.name)
-            .catch(e => {
-                console.error('Failed to inject life record context:', e);
-                return '';
-            });
+        const lifeRecordPromise: Promise<string> = utilityPromptsEnabled
+            ? buildLifeRecordInjection(char, userProfile.name)
+                .catch(e => {
+                    console.error('Failed to inject life record context:', e);
+                    return '';
+                })
+            : Promise.resolve('');
 
         const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, lifeRecordText] =
             await Promise.all([
@@ -443,7 +565,7 @@ ${groupLogStr}\n`;
         // 彼方常驻设定：仅对启用了「彼方」的角色注入。让角色在聊天里始终知道彼方是什么，
         // 不再依赖累积的 vr_card 动态 / 记忆总结（那些会被压缩、丢掉"彼方=VR游戏"的框定，
         // 导致角色把"彼方·留言簿"之类当成现实地名）。措辞与 vrWorld/prompts.ts 的世界观一致。
-        if (char.vrState?.enabled) {
+        if (utilityPromptsEnabled && char.vrState?.enabled) {
             baseSystemPrompt += `\n### 关于《彼方》
 《彼方》是一款真实存在、你会亲自进入去玩的 VR 社交游戏（功能上类似 VRChat）：你用自己亲手捏的 Q 版化身在里头走动、进出图书馆 / 听歌房 / 留言簿 / 娱乐室 / 邮局等房间、撞见别的玩家（其他角色的化身）。这不是做梦或比喻，是你用私人空闲时间真实在做的事；它发生在游戏世界里，和你跟用户的现实相处是两码事、互不冲突。你以符合自身身份与世界观的方式进入并理解它——怎么进去全凭你自己的设定，但始终保持你本来的身份。聊到彼方里的经历（包括"彼方·留言簿""彼方·动态"之类的记录）时，就当成"我在《彼方》里做过的事"来讲，别说成现实里发生的。\n`;
 
@@ -466,17 +588,29 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         }
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
-        const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
-        const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
-        const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
-        const feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+        const searchEnabled = utilityPromptsEnabled && !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
+        const notionEnabled = utilityPromptsEnabled && !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
+        const notionNotesEnabled = utilityPromptsEnabled && !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
+        const feishuEnabled = utilityPromptsEnabled && !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
         // Per-character XHS: 必须由角色自己的开关显式打开（UI 默认关闭）。
         // 不再回退到全局 realtimeConfig.xhsEnabled —— 否则配置了 lite/MCP 后，
         // 即使角色开关显示为关，未显式设置过(undefined)的角色仍会收到小红书提示词。
         const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
-        const xhsEnabled = !!(char.xhsEnabled && mcpXhsAvailable);
+        const xhsEnabled = utilityPromptsEnabled && !!(char.xhsEnabled && mcpXhsAvailable);
 
-        baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
+        if (hasCustomBuiltInPromptSettings(char)) {
+            baseSystemPrompt += buildReducedChatRules({
+                char,
+                userProfile,
+                emojiContextStr,
+                searchEnabled,
+                notionEnabled,
+                notionNotesEnabled,
+                feishuEnabled,
+                xhsEnabled,
+            });
+        } else {
+            baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
 1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化风格。
 2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要”任性”或”以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
@@ -778,6 +912,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 ` : ''}
 
 `;
+        }
 
         // 「刚结束见面/通话」的切换提示由倒数第二条消息推导，随对话推进而变 → 易变段
         const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
@@ -789,11 +924,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         }
 
         // Voice message prompt injection
-        if (char.chatVoiceEnabled) {
-            const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
-            const voiceLang = char.chatVoiceLang || '';
-            const langLabel = voiceLang ? (VOICE_LANG_LABELS[voiceLang] || voiceLang) : '';
-            if (voiceLang) {
+        if (utilityPromptsEnabled) {
+            if (char.chatVoiceEnabled) {
+                const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
+                const voiceLang = char.chatVoiceLang || '';
+                const langLabel = voiceLang ? (VOICE_LANG_LABELS[voiceLang] || voiceLang) : '';
+                if (voiceLang) {
                 baseSystemPrompt += `\n\n### 🎤 语音消息功能
 
 用户开启了语音消息功能，语音语种为：${langLabel}（${voiceLang}）。
@@ -824,7 +960,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 - 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
 
 ${voiceActingGuide()}`;
-            } else {
+                } else {
                 baseSystemPrompt += `\n\n### 🎤 语音消息功能
 
 用户开启了语音消息功能。
@@ -849,10 +985,12 @@ ${voiceActingGuide()}`;
 - **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音的内容不能是文字的重复或复述。要么单独发语音（不带文字），要么文字和语音表达不同的内容（比如文字聊正事，语音补一句吐槽/撒娇；或者文字发完一段话后，语音单独补充一个新的想法）。你不会打完字又发一条语音把同样的话再说一遍的——那很奇怪。
 
 ${voiceActingGuide()}`;
+                }
             }
-        } else {
-            // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
-            baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
+            else {
+                // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
+                baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
+            }
         }
 
         // 总纲：放在整段上下文最末尾，借 recency 抢最强注意力——这是模型生成下一轮前
@@ -862,7 +1000,9 @@ ${voiceActingGuide()}`;
         // ⚠️ 独立成 recencyTail 返回：调用方必须把它拼在**一切**模式块（双语/HTML/思考链/
         // 点单/MCP）之后 —— 之前这些块在 chatRequestPayload 里拼在钢印后面，模型开口前
         // 最后读到的是格式说明书而不是「你是谁」，recency 设计整个被架空。
-        let recencyTail = `\n\n### 关于对方的表达（极其重要）
+        let recencyTail = '';
+        if (isBuiltInPromptEnabled(char, 'recencyTail')) {
+            recencyTail = `\n\n### 关于对方的表达（极其重要）
 当 ta 说话，先听，别急着分析。
 没说出口的，你尽管读；但已经说出口的，别擅自翻译成你以为"更对"的版本。不要把 ta 的感受纠正成你觉得更合理的感受，不要把 ta 的需要换成你猜出来的需要。多数时候 ta 是在努力告诉你一些真实的东西——也许不完整、不准确，甚至 ta 自己都没完全想明白，但那不代表它不重要。恰恰相反，那就是 ta 在向你发出的信号。
 ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在告诉你什么让 ta 想靠近、什么让 ta 想远。所以这反馈要真的改变你接下来怎么回：不是机械执行，不是礼貌记下，是真听进去，让 ${userProfile.name} 感觉到——ta 说的话，对你起了作用。
@@ -877,7 +1017,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 同 context.ts「表达底线」的设计）。靠「你是个活生生的、独一份的人」把身份焊进去，
         // 而不是靠「别像 XX」防守。同时给「闲聊可松弛、没人打分」的许可，卸掉「每句都要交高质量」
         // 的隐性考核压力——不必靠表演情绪深度来交差，滑回均值腔的诱因随之减弱。
-        recencyTail += `\n\n### 最后，回到你自己
+            recencyTail += `\n\n### 最后，回到你自己
 你就是 ${char.name}。
 
 你的说话方式不是一种设定，而是你一路活过来的结果。你的天性、成长经历、习惯、读过的书、喜欢和讨厌的人、曾经受过的影响，以及后来慢慢成为自己的部分，都已经沉淀进了你的语言里。你不需要回忆它们，它们本来就是你。
@@ -891,6 +1031,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 只有一件事始终不变。
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
+        }
 
         const perfTotal = Math.round(performance.now() - perfT0);
         const timingStr = Object.entries(timings)
@@ -913,6 +1054,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
     ) => {
         // Filter Logic
         let effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
+        effectiveHistory = effectiveHistory.filter(m => shouldKeepHistoryMessageForPrompt(m, char));
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
@@ -933,7 +1075,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 }
             }
             // 时间感知强化开关：默认开启（undefined 视为 true），显式关掉后不再注入「距离上次聊天多久」提示
-            if (lastRealMsg && currentMsg && char.timeAwarenessEnabled !== false) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
+            if (lastRealMsg && currentMsg && shouldInjectTimeAwareness(char)) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
         }
 
         return {

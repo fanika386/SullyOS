@@ -28,6 +28,7 @@ import { isPromptBuildSkipped, isSystemMessageMergeEnabled } from './devDebug';
 import { mergeSystemMessages } from './systemMessageMerge';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 import { normalizeTranslationLangLabel } from './translationLang';
+import { shouldInjectUtilityPrompts } from './builtInPromptSettings';
 
 export interface UserListeningContext {
     songName: string;
@@ -227,6 +228,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         translationConfig, htmlMode, thinkingChain, mcdMiniSnap, luckinMiniSnap, luckinChat,
     } = input;
     const recentMsgsHint = input.recentMsgsHint ?? historyMsgs;
+    const utilityPromptsEnabled = shouldInjectUtilityPrompts(char);
 
     if (isPromptBuildSkipped()) {
         const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
@@ -286,7 +288,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // ── 4. 双语指令注入 ───────────────────────────────────
     const sourceLang = normalizeTranslationLangLabel(translationConfig?.sourceLang);
     const targetLang = normalizeTranslationLangLabel(translationConfig?.targetLang);
-    const bilingualActive = !!(translationConfig?.enabled && sourceLang && targetLang);
+    const bilingualActive = utilityPromptsEnabled && !!(translationConfig?.enabled && sourceLang && targetLang);
     if (bilingualActive && translationConfig) {
         systemPrompt += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
 你的每句话都必须用以下XML标签格式输出双语内容：
@@ -314,13 +316,13 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 5. HTML 卡片模式 ─────────────────────────────────
-    const htmlActive = !!htmlMode?.enabled;
+    const htmlActive = utilityPromptsEnabled && !!htmlMode?.enabled;
     if (htmlActive) {
         systemPrompt += `\n\n${buildHtmlPrompt(htmlMode?.customPrompt)}`;
     }
 
     // ── 6. 思考链提示词 ───────────────────────────────────
-    const thinkingActive = !!thinkingChain?.enabled;
+    const thinkingActive = utilityPromptsEnabled && !!thinkingChain?.enabled;
     if (thinkingActive) {
         const userName = (userProfile?.name && userProfile.name.trim()) || '用户';
         systemPrompt += `\n\n${buildThinkingChainPrompt(char.name, userName)}`;
@@ -347,7 +349,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     );
 
     // ── 9. 麦当劳小程序上下文（购物车/菜单实时快照 → 易变尾段） ──
-    const mcdActive = !!mcdMiniSnap?.open;
+    const mcdActive = utilityPromptsEnabled && !!mcdMiniSnap?.open;
     if (mcdActive) {
         const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
         if (block) {
@@ -356,7 +358,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 9b. 瑞幸小程序上下文（同上，易变尾段） ──
-    const luckinActive = !!luckinMiniSnap?.open;
+    const luckinActive = utilityPromptsEnabled && !!luckinMiniSnap?.open;
     if (luckinActive) {
         const block = buildLuckinMiniAppContextBlock(luckinMiniSnap, userProfile?.name || '用户');
         if (block) {
@@ -365,7 +367,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 9c. 瑞幸聊天点单模式 (角色直接调真实工具；含实时定位/会话状态 → 易变尾段) ──
-    const luckinChatActive = !!luckinChat?.active;
+    const luckinChatActive = utilityPromptsEnabled && !!luckinChat?.active;
     if (luckinChatActive) {
         const block = buildLuckinChatSystemBlock(luckinChat, recentMsgsHint, userProfile?.name || '用户');
         if (block) {
@@ -375,7 +377,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 
     // ── 9d. 通用 MCP 工具模式 (用户自配的远程 MCP 服务器, 见 docs/mcp-client.md) ──
     // 工具清单来自持久化的发现结果，变化很慢 → 稳定段。
-    const mcpChatActive = isMcpChatAvailable(char.id);
+    const mcpChatActive = utilityPromptsEnabled && isMcpChatAvailable(char.id);
     if (mcpChatActive) {
         const block = buildMcpSystemBlock(userProfile?.name || '用户', char.id);
         if (block) {

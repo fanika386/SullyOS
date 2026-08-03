@@ -39,6 +39,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
+import { shouldInjectScheduleAndEmotion } from '../utils/builtInPromptSettings';
 import { toMountedWorldbook } from '../utils/worldbook';
 import { initLocalStorageMirror } from '../utils/lsMirror';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
@@ -1981,7 +1982,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // 3c. 情绪评估 fire-and-forget — 与主 API 并行，沿用 useChatAI 的 API 选择逻辑：
               //     角色专属情绪 API > 主 apiConfig（与记忆宫殿副 API 完全独立）
-              if (!payload.flags.promptBuildSkipped && !isEmotionEvalSkipped() && isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+              if (!payload.flags.promptBuildSkipped && !isEmotionEvalSkipped() && shouldInjectScheduleAndEmotion(char) && isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
                   const emotionApi = (char.emotionConfig.api?.baseUrl)
                       ? char.emotionConfig.api
                       : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
