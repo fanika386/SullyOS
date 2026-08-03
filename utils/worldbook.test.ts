@@ -405,6 +405,70 @@ describe('worldbook duplicate AI review', () => {
         expect(result.reviews[0].needsHumanReview[0]).toContain('「观星公会」');
     });
 
+    it('reviews connected duplicate findings as one multi-book group', async () => {
+        const books = [
+            book({
+                id: 'guild-a',
+                title: '观星公会',
+                key: ['观星公会', '星图'],
+                content: '观星公会负责维护星图。成员会记录流星雨、潮汐异常和月城航线。',
+            }),
+            book({
+                id: 'guild-b',
+                title: '星图管理员',
+                key: ['星图', '管理员'],
+                content: '星图管理员隶属于观星公会，主要工作是校准月城航线，并把潮汐异常写入档案。',
+            }),
+            book({
+                id: 'guild-c',
+                title: '星图档案',
+                key: ['星图档案', '潮汐异常'],
+                content: '星图档案收录观星公会记录的流星雨、潮汐异常和月城航线校准结果。',
+            }),
+        ];
+        const analysis = analyzeWorldbookDuplicates(books);
+        let requestedBody: any = null;
+
+        const result = await reviewWorldbookDuplicatesWithAI({
+            api: { baseUrl: 'https://api.example.test/v1', apiKey: 'sk-test', model: 'cheap-reviewer' },
+            books,
+            analysis,
+            fetchImpl: async (_url, init) => {
+                requestedBody = JSON.parse(String(init?.body));
+                return new Response(JSON.stringify({
+                    choices: [{
+                        message: {
+                            content: JSON.stringify({
+                                reviews: [{
+                                    findingId: 'group:guild-a__guild-b__guild-c',
+                                    relation: 'duplicate',
+                                    functionalOverlap: 84,
+                                    verdict: 'Book A、Book B 和 Book C 都在讲星图维护。',
+                                    mergeAdvice: ['把 Book A 的组织、Book B 的职位、Book C 的档案内容合成一条。'],
+                                    keepAdvice: '用 Book C 当补充小节。',
+                                    needsHumanReview: ['确认 Book B 是否需要单独保留职位设定。'],
+                                }],
+                            }),
+                        },
+                    }],
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            },
+        });
+
+        const prompt = JSON.parse(requestedBody.messages[1].content);
+        expect(prompt.duplicateGroups).toHaveLength(1);
+        expect(prompt.duplicateGroups[0].findingId).toBe('group:guild-a__guild-b__guild-c');
+        expect(prompt.duplicateGroups[0].books.map((item: any) => item.title)).toEqual(['观星公会', '星图管理员', '星图档案']);
+        expect(prompt.candidates).toBeUndefined();
+        expect(result.reviews).toHaveLength(1);
+        expect(result.reviews[0].bookTitles).toEqual(['观星公会', '星图管理员', '星图档案']);
+        expect(JSON.stringify(result.reviews[0])).not.toContain('Book C');
+        expect(result.reviews[0].verdict).toContain('「星图档案」');
+        expect(result.reviews[0].mergeAdvice[0]).toContain('「观星公会」');
+        expect(result.reviews[0].mergeAdvice[0]).toContain('「星图管理员」');
+        expect(result.reviews[0].keepAdvice).toContain('「星图档案」');
+    });
+
     it('rejects incomplete AI review API configuration before making a request', async () => {
         await expect(reviewWorldbookDuplicatesWithAI({
             api: { baseUrl: '', apiKey: 'sk-test', model: 'cheap-reviewer' },

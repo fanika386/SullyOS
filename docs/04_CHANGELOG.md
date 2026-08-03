@@ -24,6 +24,47 @@
 后续注意：
 ```
 
+## 2026-08-03 - 世界书 AI 多本重复组
+
+本次任务：
+
+把世界书 AI 深检从单纯两两候选升级为重复组审查，三本、四本或更多本互相关联时按一组给用户建议。
+
+修改内容：
+
+- 在 `utils/worldbook.ts` 根据本地重复候选构建连通重复组；两本仍按一组处理，三本以上会生成 `multi_book_group`。
+- AI 请求改为发送 `duplicateGroups`，每组包含真实书名、内容摘要和组内本地重复对，不再只发送 `bookA` / `bookB`。
+- AI 结果解析支持组级 `findingId`，并返回 `bookIds` / `bookTitles` 给 UI 使用。
+- `Book A`、`Book B`、`Book C` 等代称会按组内顺序兜底替换成真实世界书标题。
+- 在 `apps/WorldbookApp.tsx` 中让 AI 深检结果卡片优先显示组内真实书名列表。
+- 在 `utils/worldbook.test.ts` 增加三本重复组测试，覆盖请求结构、书名返回和 `Book C` 清洗。
+
+新增模块：
+
+- 无。
+
+影响模块：
+
+- `apps/WorldbookApp.tsx`
+- `utils/worldbook.ts`
+- `utils/worldbook.test.ts`
+
+是否修改业务逻辑：
+
+- 是。AI 深检不再只按单个候选对审查；多个互相关联的候选对会聚合成一组，用户会看到组级建议。
+
+是否更新 `01_PROJECT_MAP.md`：
+
+- 否。本次没有新增、移动或删除模块。
+
+是否更新 `02_ARCHITECTURE.md`：
+
+- 否。本次仍属于世界书去重功能内部逻辑。
+
+后续注意：
+
+- 组级 AI 深检仍只发送本地检测出的疑似重复内容；不会自动合并、删除或改写世界书。
+
 ## 2026-08-03 - 世界书 AI 深检书名显示
 
 本次任务：

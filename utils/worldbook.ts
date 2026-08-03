@@ -117,6 +117,8 @@ export interface BuildWorldbookDedupeAiApiChoicesInput {
 
 export interface WorldbookDuplicateAiReview {
     findingId: string;
+    bookIds?: string[];
+    bookTitles?: string[];
     relation: WorldbookDuplicateAiRelation;
     functionalOverlap: number;
     verdict: string;
@@ -806,47 +808,125 @@ const asReviewTextArray = (value: unknown): string[] => {
 
 const excerptForAi = (value: string, maxLength = 900): string => makeTextExcerpt(value || '', maxLength);
 
-const buildWorldbookDedupeAiPrompt = (
+interface WorldbookDedupeAiReviewContext {
+    findingId: string;
+    bookRefs: WorldbookDuplicateBookRef[];
+    findings: WorldbookDuplicateFinding[];
+    candidate: Record<string, unknown>;
+}
+
+const bookOrderIndex = (books: WorldbookLike[]): Map<string, number> => (
+    new Map(books.map((book, index) => [book.id, index]))
+);
+
+const sortBookIdsByInputOrder = (bookIds: string[], order: Map<string, number>): string[] => (
+    [...bookIds].sort((left, right) => (order.get(left) ?? Number.MAX_SAFE_INTEGER) - (order.get(right) ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right))
+);
+
+const buildWorldbookDedupeAiReviewContexts = (
     books: WorldbookLike[],
     findings: WorldbookDuplicateFinding[],
-): string => {
+): WorldbookDedupeAiReviewContext[] => {
     const bookById = new Map(books.map(book => [book.id, book]));
-    const candidates = findings.map(finding => {
-        const bookA = bookById.get(finding.bookA.id);
-        const bookB = bookById.get(finding.bookB.id);
+    const order = bookOrderIndex(books);
+    const adjacency = new Map<string, Set<string>>();
+    const findingsByBookId = new Map<string, WorldbookDuplicateFinding[]>();
+    findings.forEach(finding => {
+        const left = finding.bookA.id;
+        const right = finding.bookB.id;
+        if (!adjacency.has(left)) adjacency.set(left, new Set());
+        if (!adjacency.has(right)) adjacency.set(right, new Set());
+        adjacency.get(left)?.add(right);
+        adjacency.get(right)?.add(left);
+        [left, right].forEach(id => {
+            if (!findingsByBookId.has(id)) findingsByBookId.set(id, []);
+            findingsByBookId.get(id)?.push(finding);
+        });
+    });
+
+    const seen = new Set<string>();
+    const seedIds = sortBookIdsByInputOrder(Array.from(adjacency.keys()), order);
+    const bookPayload = (id: string) => {
+        const book = bookById.get(id);
         return {
-            findingId: finding.id,
-            localDuplicateRate: finding.duplicateRate,
-            localVerdict: finding.verdict,
-            localReasons: finding.reasons,
-            sharedKeywords: finding.sharedKeywords,
-            bookA: {
-                title: finding.bookA.title,
-                category: finding.bookA.category || '',
-                keywords: [...(bookA?.key || []), ...(bookA?.keysecondary || [])].slice(0, 12),
-                contentExcerpt: excerptForAi(bookA?.content || ''),
-            },
-            bookB: {
-                title: finding.bookB.title,
-                category: finding.bookB.category || '',
-                keywords: [...(bookB?.key || []), ...(bookB?.keysecondary || [])].slice(0, 12),
-                contentExcerpt: excerptForAi(bookB?.content || ''),
-            },
-            evidence: finding.evidence.map(item => ({
+            id,
+            title: book?.title || id,
+            category: book?.category || '',
+            keywords: [...(book?.key || []), ...(book?.keysecondary || [])].slice(0, 12),
+            contentExcerpt: excerptForAi(book?.content || ''),
+        };
+    };
+    const pairPayload = (finding: WorldbookDuplicateFinding) => ({
+        pairId: finding.id,
+        bookTitles: [finding.bookA.title, finding.bookB.title],
+        localDuplicateRate: finding.duplicateRate,
+        localVerdict: finding.verdict,
+        localReasons: finding.reasons,
+        sharedKeywords: finding.sharedKeywords,
+        evidence: finding.evidence.map(item => ({
                 sourceText: item.sourceText,
                 targetText: item.targetText,
                 similarity: item.similarity,
-            })),
-        };
+        })),
     });
 
+    return seedIds.flatMap(seed => {
+        if (seen.has(seed)) return [];
+        const stack = [seed];
+        const component = new Set<string>();
+        while (stack.length > 0) {
+            const id = stack.pop();
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            component.add(id);
+            adjacency.get(id)?.forEach(next => {
+                if (!seen.has(next)) stack.push(next);
+            });
+        }
+
+        const bookIds = sortBookIdsByInputOrder(Array.from(component), order);
+        const componentFindings = findings
+            .filter(finding => component.has(finding.bookA.id) && component.has(finding.bookB.id))
+            .sort((left, right) => right.duplicateRate - left.duplicateRate || left.id.localeCompare(right.id));
+        if (bookIds.length < 2 || componentFindings.length === 0) return [];
+
+        const findingId = bookIds.length === 2 ? componentFindings[0].id : `group:${bookIds.join('__')}`;
+        const bookRefs = bookIds.map(id => {
+            const firstFinding = findingsByBookId.get(id)?.[0];
+            if (firstFinding?.bookA.id === id) return firstFinding.bookA;
+            if (firstFinding?.bookB.id === id) return firstFinding.bookB;
+            return { id, title: bookById.get(id)?.title || id, category: bookById.get(id)?.category };
+        });
+        return [{
+            findingId,
+            bookRefs,
+            findings: componentFindings,
+            candidate: {
+                findingId,
+                reviewMode: bookIds.length > 2 ? 'multi_book_group' : 'pair',
+                bookCount: bookIds.length,
+                books: bookIds.map(bookPayload),
+                localPairs: componentFindings.map(pairPayload),
+            },
+        }];
+    });
+};
+
+const buildWorldbookDedupeAiPrompt = (
+    contexts: WorldbookDedupeAiReviewContext[],
+): string => {
+    const duplicateGroups = contexts.map(context => context.candidate);
+
     return JSON.stringify({
-        task: 'review_worldbook_duplicate_candidates',
+        task: 'review_worldbook_duplicate_groups',
+        groupRule: '每个 duplicateGroups 项可能包含 2 本或更多本世界书；请按一组一起判断，不要拆成 Book A / Book B。',
+        duplicateGroups,
         outputSchema: {
             reviews: [{
-                findingId: 'string，必须等于输入候选的 findingId',
+                findingId: 'string，必须等于输入 duplicateGroups 的 findingId',
+                bookTitles: ['可选：直接返回本组真实书名'],
                 relation: 'duplicate | overlap | complementary | conflict | unrelated',
-                functionalOverlap: '0-100，粗略判断两条有多像',
+                functionalOverlap: '0-100，粗略判断这一组有多像',
                 verdict: '一句通俗中文结论，必须写真实书名，例如：「月城设定」和「月城历史」主要在说同一件事，可以合在一起。',
                 mergeAdvice: ['短句建议：用真实书名说明怎么合并、删哪句、保留哪条、标题或关键词怎么改'],
                 keepAdvice: '可选：用简单话说明哪条更适合保留',
@@ -856,27 +936,28 @@ const buildWorldbookDedupeAiPrompt = (
         writingStyle: [
             '这是粗略扫重和修复建议，不是最终判定。',
             '不用写学术分析，也不要使用“功能覆盖”“语义一致性”等专业说法。',
-            '不要说 Book A、Book B；用户看多本世界书时分不清，请直接说书名。',
+            '不要说 Book A、Book B、Book C；用户看多本世界书时分不清，请直接说书名。',
             '优先输出短句，每条建议尽量 30 个中文字符以内。',
         ],
-        candidates,
     }, null, 2);
 };
 
-const replaceAiBookAliasesWithTitles = (value: string, finding?: WorldbookDuplicateFinding): string => {
-    if (!value || !finding) return value;
-    const titleA = `「${finding.bookA.title}」`;
-    const titleB = `「${finding.bookB.title}」`;
-    return value
-        .replace(/\b[Bb]ook\s*A\b/g, titleA)
-        .replace(/\b[Bb]ook\s*B\b/g, titleB)
-        .replace(/书本\s*A|书本A|世界书\s*A|世界书A|条目\s*A|条目A|A\s*书/g, titleA)
-        .replace(/书本\s*B|书本B|世界书\s*B|世界书B|条目\s*B|条目B|B\s*书/g, titleB);
+const replaceAiBookAliasesWithTitles = (value: string, context?: WorldbookDedupeAiReviewContext): string => {
+    if (!value || !context) return value;
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    return context.bookRefs.reduce((text, book, index) => {
+        const letter = letters[index];
+        if (!letter) return text;
+        const title = `「${book.title}」`;
+        return text
+            .replace(new RegExp(`\\b[Bb]ook\\s*${letter}\\b`, 'g'), title)
+            .replace(new RegExp(`书本\\s*${letter}|书本${letter}|世界书\\s*${letter}|世界书${letter}|条目\\s*${letter}|条目${letter}|${letter}\\s*书`, 'g'), title);
+    }, value);
 };
 
 const parseWorldbookDedupeAiReviews = (
     rawText: string,
-    findingById: Map<string, WorldbookDuplicateFinding>,
+    contextById: Map<string, WorldbookDedupeAiReviewContext>,
 ): WorldbookDuplicateAiReview[] => {
     const parsed = extractJson(rawText);
     const rawReviews = Array.isArray(parsed)
@@ -887,13 +968,15 @@ const parseWorldbookDedupeAiReviews = (
                 ? parsed.results
                 : [];
     const reviews = rawReviews.flatMap((item: any): WorldbookDuplicateAiReview[] => {
-        const findingId = String(item?.findingId || item?.id || item?.pairId || '').trim();
-        const finding = findingById.get(findingId);
-        if (!finding) return [];
-        const cleanText = (value: string): string => replaceAiBookAliasesWithTitles(value, finding);
+        const findingId = String(item?.findingId || item?.groupId || item?.id || item?.pairId || '').trim();
+        const context = contextById.get(findingId);
+        if (!context) return [];
+        const cleanText = (value: string): string => replaceAiBookAliasesWithTitles(value, context);
         const verdict = cleanText(makeTextExcerpt(String(item?.verdict || item?.summary || item?.reason || '').trim(), 240));
         return [{
             findingId,
+            bookIds: context.bookRefs.map(book => book.id),
+            bookTitles: context.bookRefs.map(book => book.title),
             relation: normalizedAiRelation(item?.relation || item?.type),
             functionalOverlap: Math.round(clamp(item?.functionalOverlap ?? item?.overlap ?? item?.score, 0, 100, 0)),
             verdict: verdict || 'AI 认为这组候选需要人工复核。',
@@ -928,8 +1011,9 @@ export const reviewWorldbookDuplicatesWithAI = async ({
         throw new Error('请先运行本地检测并获得候选重复项');
     }
 
-    const findingById = new Map<string, WorldbookDuplicateFinding>(
-        findings.map(finding => [finding.id, finding]),
+    const contexts = buildWorldbookDedupeAiReviewContexts(books, findings);
+    const contextById = new Map<string, WorldbookDedupeAiReviewContext>(
+        contexts.map(context => [context.findingId, context]),
     );
     const temperature = clamp(api.temperature, 0, 2, 0.1);
     const response = await fetchImpl(`${baseUrl}/chat/completions`, {
@@ -942,7 +1026,7 @@ export const reviewWorldbookDuplicatesWithAI = async ({
             model,
             messages: [
                 { role: 'system', content: WORLDBOOK_DEDUPE_AI_SYSTEM_PROMPT },
-                { role: 'user', content: buildWorldbookDedupeAiPrompt(books, findings) },
+                { role: 'user', content: buildWorldbookDedupeAiPrompt(contexts) },
             ],
             temperature,
             stream: false,
@@ -962,7 +1046,7 @@ export const reviewWorldbookDuplicatesWithAI = async ({
         model,
         reviewedAt: Date.now(),
         rawText,
-        reviews: parseWorldbookDedupeAiReviews(rawText, findingById),
+        reviews: parseWorldbookDedupeAiReviews(rawText, contextById),
     };
 };
 

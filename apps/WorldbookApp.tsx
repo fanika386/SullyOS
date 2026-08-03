@@ -842,12 +842,17 @@ const WorldbookApp: React.FC = () => {
                                     <div className="space-y-3">
                                         {dedupeAiResult.reviews.map(review => {
                                             const finding = dedupeAnalysis.findings.find(item => item.id === review.findingId);
+                                            const reviewTitle = review.bookTitles?.length
+                                                ? review.bookTitles.join(' ↔ ')
+                                                : finding
+                                                    ? `${finding.bookA.title} ↔ ${finding.bookB.title}`
+                                                    : review.findingId;
                                             return (
                                                 <div key={review.findingId} className="rounded-2xl border border-emerald-100 bg-white/90 p-4 shadow-sm">
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="min-w-0">
                                                             <div className="text-sm font-black text-slate-800 truncate">
-                                                                {finding ? `${finding.bookA.title} ↔ ${finding.bookB.title}` : review.findingId}
+                                                                {reviewTitle}
                                                             </div>
                                                             <div className="mt-1 text-[11px] leading-relaxed text-slate-600">{review.verdict}</div>
                                                         </div>
