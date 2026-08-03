@@ -26,6 +26,8 @@ const RANGE_PAGE_SIZE = 100;
 const SEMANTIC_DEDUP_THRESHOLD = 0.96;
 const DEDUP_AI_SOURCE_MEMORY = 'memoryPalace';
 const DEDUP_AI_SOURCE_MAIN = 'main';
+/** 去重进度框至少显示这么久，避免扫描太快时用户根本看不到步骤小字 */
+const DEDUP_MIN_VISIBLE_MS = 600;
 
 /** 手动总结面板：把毫秒时间戳格式化成「2026-03-20 14:30」 */
 const fmtRangeTs = (ts: number): string => {
@@ -560,7 +562,36 @@ export default function MemoryPalaceApp() {
     const deduping = dedupTask.status === 'running';
     const dedupResult = dedupTask.result;
     const dedupReviewPreview = dedupTask.status === 'review' ? dedupTask.preview : null;
-    const dedupProgress = dedupTask.progress;
+    // 任务结束（done/error/review）时 store 会立刻清掉 progress，
+    // 这里把最后一帧进度多留一会，避免扫描太快时步骤小字一闪而过、根本没画出来。
+    const [stickyDedupProgress, setStickyDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
+    const dedupHideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const displayDedupProgress = dedupTask.progress ?? stickyDedupProgress;
+
+    useEffect(() => {
+        if (dedupTask.progress) {
+            if (dedupHideTimerRef.current) {
+                clearTimeout(dedupHideTimerRef.current);
+                dedupHideTimerRef.current = null;
+            }
+            setStickyDedupProgress(dedupTask.progress);
+            return;
+        }
+        const finished = dedupTask.status === 'done'
+            || dedupTask.status === 'error'
+            || dedupTask.status === 'review'
+            || dedupTask.status === 'interrupted';
+        if (!finished || !stickyDedupProgress || dedupHideTimerRef.current) return;
+        const remaining = DEDUP_MIN_VISIBLE_MS - (Date.now() - dedupTask.startedAt);
+        dedupHideTimerRef.current = setTimeout(() => {
+            dedupHideTimerRef.current = null;
+            setStickyDedupProgress(null);
+        }, Math.max(0, remaining));
+    }, [dedupTask.progress, dedupTask.status, dedupTask.startedAt, stickyDedupProgress]);
+
+    useEffect(() => () => {
+        if (dedupHideTimerRef.current) clearTimeout(dedupHideTimerRef.current);
+    }, []);
 
     useEffect(() => {
         setDedupMergingGroupKey(null);
@@ -1846,6 +1877,8 @@ export default function MemoryPalaceApp() {
             result: `正在扫描${scopeLabel}的记忆节点…`,
         });
         dedupTaskStore.set({ progress: { done: 0, total: 1, label: scanScope.ownerName, step: '正在读取记忆节点…' } });
+        // 先让浏览器画出一帧进度框，再开始可能很耗时的扫描
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
         try {
             if (dedupMode === 'ai') {
                 const aiConfig = resolveDedupAiConfig();
@@ -1865,8 +1898,9 @@ export default function MemoryPalaceApp() {
                     ),
                     onProgress: (completed, total, charId) => {
                         const owner = charNameById[charId] || charId;
+                        const batchPart = total > 1 ? `（第 ${completed}/${total} 批）` : '';
                         dedupTaskStore.set({
-                            progress: { done: completed, total, label: owner, step: `AI 正在扫描 ${completed}/${total} 个角色：${owner}…` },
+                            progress: { done: completed, total, label: owner, step: `AI 正在扫描「${owner}」的记忆${batchPart}…` },
                             result: `AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`,
                         });
                     },
@@ -1905,8 +1939,9 @@ export default function MemoryPalaceApp() {
                     ),
                     onProgress: (completed, total, charId) => {
                         const owner = nameById.get(charId) || charId;
+                        const batchPart = total > 1 ? `（第 ${completed}/${total} 批）` : '';
                         dedupTaskStore.set({
-                            progress: { done: completed, total, label: owner, step: `正在比对向量 ${completed}/${total} 个角色：${owner}…` },
+                            progress: { done: completed, total, label: owner, step: `正在比对「${owner}」的记忆向量${batchPart}…` },
                         });
                     },
                 })
@@ -1975,9 +2010,12 @@ export default function MemoryPalaceApp() {
 
         dedupTaskStore.set({
             status: 'running',
+            startedAt: Date.now(),
             progress: { done: 0, total: selectedPreview.duplicateCount, label: ownerName, step: '正在准备删除清单…' },
             result: `正在删除 ${selectedPreview.duplicateCount} 条重复记忆…`,
         });
+        // 先让浏览器画出一帧进度框，再开始删除
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
         try {
             const result = await applyExactDuplicateMemoryDeletion(selectedPreview, {
                 remoteConfig: remoteVectorConfig,
@@ -4587,31 +4625,31 @@ create table if not exists memory_vectors (
                         </div>
                     )}
 
-                    {dedupProgress && (
+                    {displayDedupProgress && (
                         <div style={{
                             marginBottom: 10, padding: 10, borderRadius: 12,
                             background: '#eef2ff', border: '1px solid #c7d2fe',
                         }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
                                 <span style={{ fontSize: 11, fontWeight: 800, color: '#3730a3' }}>
-                                    {dedupProgress.label}
+                                    {displayDedupProgress.label}
                                 </span>
                                 <span style={{ fontSize: 10, fontWeight: 800, color: '#4f46e5' }}>
-                                    {dedupProgress.done}/{dedupProgress.total}
+                                    {displayDedupProgress.done}/{displayDedupProgress.total}
                                 </span>
                             </div>
                             <div style={{ height: 7, borderRadius: 999, overflow: 'hidden', background: '#e0e7ff' }}>
                                 <div style={{
-                                    width: `${Math.max(8, Math.min(100, Math.round((dedupProgress.done / Math.max(1, dedupProgress.total)) * 100)))}%`,
+                                    width: `${Math.max(8, Math.min(100, Math.round((displayDedupProgress.done / Math.max(1, displayDedupProgress.total)) * 100)))}%`,
                                     height: '100%', borderRadius: 999,
                                     background: 'linear-gradient(90deg, #6366f1, #0ea5e9)',
                                     transition: 'width 180ms ease',
                                 }} />
                             </div>
-                            {dedupProgress.step && (
+                            {displayDedupProgress.step && (
                                 <div style={{ fontSize: 11, color: '#3730a3', marginTop: 7, lineHeight: 1.55, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
                                     <span className="animate-dot-pulse" style={{ width: 6, height: 6, borderRadius: 999, background: '#6366f1', marginTop: 4, flexShrink: 0 }} />
-                                    <span>{dedupProgress.step}</span>
+                                    <span>{displayDedupProgress.step}</span>
                                 </div>
                             )}
                             {deduping && (

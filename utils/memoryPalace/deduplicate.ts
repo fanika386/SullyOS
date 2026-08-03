@@ -308,7 +308,7 @@ export async function scanSemanticDuplicateMemories(
     options.onStep?.('正在读取向量并计算相似度…');
 
     for (const [charId, charNodes] of nodesByChar) {
-        options.onStep?.(`正在比对 ${completed + 1}/${totalChars} 个角色的向量…`);
+        options.onStep?.('正在比对向量相似度…');
         const vectors = vectorByMemoryId(await MemoryVectorDB.getAllByCharId(charId));
         const candidates = charNodes.filter(node =>
             vectors.has(node.id) && hasComparableContent(node, minContentLength)
@@ -796,7 +796,7 @@ export async function scanAiSemanticDuplicateMemories(
     }
 
     const charBatches = Array.from(nodesByChar.entries()).filter(([, charNodes]) => charNodes.length >= 2);
-    options.onStep?.(charBatches.length > 0 ? '正在调用 AI 逐角色扫描…' : '正在汇总 AI 候选…');
+    options.onStep?.(charBatches.length > 0 ? '正在调用 AI 扫描记忆…' : '正在汇总 AI 候选…');
     const groups: ExactDuplicateMemoryGroup[] = [];
     let completed = 0;
 
