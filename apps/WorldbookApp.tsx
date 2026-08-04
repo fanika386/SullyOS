@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
-import { Worldbook, WorldbookDepthRole, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
+import { AppID, Worldbook, WorldbookDepthRole, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
 import Modal from '../components/os/Modal';
 import { DiamondsFour, BookOpen, DownloadSimple, UploadSimple, WarningCircle, MagnifyingGlass, X, Check } from '@phosphor-icons/react';
 import {
@@ -14,7 +14,8 @@ import {
     WORLDBOOK_POSITION_LABELS,
     WORLDBOOK_ROLE_LABELS,
 } from '../utils/worldbook';
-import type { WorldbookDedupeAiApiDraft, WorldbookDuplicateAiRelation, WorldbookDuplicateAiResult, WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
+import type { WorldbookDedupeAiApiDraft, WorldbookDuplicateAiRelation, WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
+import { worldbookDedupTaskStore, useWorldbookDedupTask } from '../utils/worldbookDedupTaskStore';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { shareOrDownloadFile } from '../utils/shareExport';
 
@@ -53,7 +54,7 @@ type ApiConfigWithWorldbookDedupe<T> = T & {
 };
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets } = useOS();
+    const { closeApp, openApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -64,9 +65,13 @@ const WorldbookApp: React.FC = () => {
     const [dedupeMode, setDedupeMode] = useState(false);
     const [selectedDedupeIds, setSelectedDedupeIds] = useState<Set<string>>(() => new Set());
     const [dedupeAnalysis, setDedupeAnalysis] = useState<WorldbookDuplicateAnalysis | null>(null);
-    const [dedupeAiResult, setDedupeAiResult] = useState<WorldbookDuplicateAiResult | null>(null);
-    const [isDedupeAiReviewing, setIsDedupeAiReviewing] = useState(false);
     const [dedupeAiChoiceId, setDedupeAiChoiceId] = useState('');
+
+    // AI 深度检查任务放在全局 store：退出世界书 / 切到别的 OS App 后任务照常跑，
+    // 回来时从 store 恢复选择、分析和结果（组件卸载不会中断异步请求）。
+    const dedupeTask = useWorldbookDedupTask();
+    const isDedupeAiReviewing = dedupeTask.status === 'running';
+    const dedupeAiResult = dedupeTask.status === 'done' ? dedupeTask.aiResult : null;
 
     const PAGE_SIZE = 12;
 
@@ -313,19 +318,44 @@ const WorldbookApp: React.FC = () => {
         setPreviewBookId(previewBookId === id ? null : id);
     };
 
+    // 没有正在跑的任务时，清掉上次的全局结果（选择一变，旧结果就不再对应当前选择）
+    const clearDedupeTaskIfIdle = () => {
+        if (worldbookDedupTaskStore.get().status !== 'running') {
+            worldbookDedupTaskStore.reset();
+        }
+    };
+
+    /** 回到世界书去重面板（页面内直接跳） */
+    const openDedupePanel = useCallback(() => {
+        setDedupeMode(true);
+        requestAnimationFrame(() => {
+            document.getElementById('worldbook-dedup-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    }, []);
+
+    /** 可点击 toast：回到世界书并跳到去重面板 */
+    const jumpToDedupResult = useCallback(() => {
+        openApp(AppID.Worldbook);
+        worldbookDedupTaskStore.requestFocus();
+    }, [openApp]);
+
     const toggleDedupeMode = () => {
         setDedupeMode(prev => {
             const next = !prev;
             if (!next) {
-                setSelectedDedupeIds(new Set());
-                setDedupeAnalysis(null);
-                setDedupeAiResult(null);
+                // 任务正在跑时不清理本地选择/分析，切回来还能看到当前进度
+                if (worldbookDedupTaskStore.get().status !== 'running') {
+                    setSelectedDedupeIds(new Set());
+                    setDedupeAnalysis(null);
+                    clearDedupeTaskIfIdle();
+                }
             }
             return next;
         });
     };
 
     const toggleDedupeSelection = (id: string) => {
+        if (isDedupeAiReviewing) return;
         setSelectedDedupeIds(prev => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
@@ -333,11 +363,12 @@ const WorldbookApp: React.FC = () => {
             return next;
         });
         setDedupeAnalysis(null);
-        setDedupeAiResult(null);
+        clearDedupeTaskIfIdle();
     };
 
     const toggleDedupeCategory = (event: React.MouseEvent, books: Worldbook[]) => {
         event.stopPropagation();
+        if (isDedupeAiReviewing) return;
         setSelectedDedupeIds(prev => {
             const next = new Set(prev);
             const everySelected = books.every(book => next.has(book.id));
@@ -348,29 +379,32 @@ const WorldbookApp: React.FC = () => {
             return next;
         });
         setDedupeAnalysis(null);
-        setDedupeAiResult(null);
+        clearDedupeTaskIfIdle();
     };
 
     const selectAllForDedupe = () => {
+        if (isDedupeAiReviewing) return;
         setSelectedDedupeIds(new Set(worldbooks.map(book => book.id)));
         setDedupeAnalysis(null);
-        setDedupeAiResult(null);
+        clearDedupeTaskIfIdle();
     };
 
     const clearDedupeSelection = () => {
+        if (isDedupeAiReviewing) return;
         setSelectedDedupeIds(new Set());
         setDedupeAnalysis(null);
-        setDedupeAiResult(null);
+        clearDedupeTaskIfIdle();
     };
 
     const runDedupeAnalysis = () => {
+        if (isDedupeAiReviewing) return;
         if (selectedDedupeBooks.length < 2) {
             addToast('至少选择 2 本世界书才能检测', 'error');
             return;
         }
         const analysis = analyzeWorldbookDuplicates(selectedDedupeBooks);
         setDedupeAnalysis(analysis);
-        setDedupeAiResult(null);
+        clearDedupeTaskIfIdle();
         if (analysis.duplicatePairs > 0) {
             addToast(`发现 ${analysis.duplicatePairs} 组疑似重复`, 'info');
         } else {
@@ -378,6 +412,8 @@ const WorldbookApp: React.FC = () => {
         }
     };
 
+    // 退出世界书 / 切到别的 OS App 后任务照常跑：状态写进全局 store，
+    // 完成后用可点击 toast 提醒，回到页面时恢复选择和分析并展示结果。
     const runDedupeAiReview = async () => {
         if (isDedupeAiReviewing) return;
         if (selectedDedupeBooks.length < 2) {
@@ -388,26 +424,69 @@ const WorldbookApp: React.FC = () => {
             addToast('请先给当前 AI 选择补全 URL、Key 和模型', 'error');
             return;
         }
-        setIsDedupeAiReviewing(true);
+        const analysis = dedupeAnalysis ?? analyzeWorldbookDuplicates(selectedDedupeBooks);
+        if (!dedupeAnalysis) setDedupeAnalysis(analysis);
+        const books = selectedDedupeBooks;
+        const api = dedupeAiSelectedChoice.api;
+
+        worldbookDedupTaskStore.begin({
+            selectedBookIds: books.map(book => book.id),
+            analysis,
+            aiChoiceId: dedupeAiChoiceId,
+            result: 'AI 深度检查已在后台运行…',
+        });
+        addToast('AI 深度检查开始了，可以先去做别的', 'info', 8000, jumpToDedupResult);
+
         try {
-            if (!dedupeAnalysis) {
-                setDedupeAnalysis(analyzeWorldbookDuplicates(selectedDedupeBooks));
-            }
-            const result = await reviewSelectedWorldbooksWithAI({
-                api: dedupeAiSelectedChoice.api,
-                books: selectedDedupeBooks,
+            const result = await reviewSelectedWorldbooksWithAI({ api, books });
+            worldbookDedupTaskStore.set({
+                status: 'done',
+                progress: null,
+                aiResult: result,
+                result: result.reviews.length > 0
+                    ? `[ok]AI 深度检查完成：${result.reviews.length} 组建议`
+                    : '[ok]AI 深度检查完成：没有发现需要处理的重复组',
+                finishedAt: Date.now(),
             });
-            setDedupeAiResult(result);
             addToast(result.reviews.length > 0
-                ? `AI 深度检查完成：${result.reviews.length} 组建议`
-                : 'AI 深度检查完成：没有发现需要处理的重复组',
-                'success');
+                ? `AI 深度检查完成：${result.reviews.length} 组建议，点这里查看`
+                : 'AI 深度检查完成：没有发现需要处理的重复组，点这里查看',
+                'success', 8000, jumpToDedupResult);
         } catch (error: any) {
+            worldbookDedupTaskStore.set({
+                status: 'error',
+                progress: null,
+                aiResult: null,
+                result: `[err]AI 深度检查失败：${error?.message || error}`,
+                finishedAt: Date.now(),
+            });
             addToast(error?.message || 'AI 深度检查失败', 'error');
-        } finally {
-            setIsDedupeAiReviewing(false);
         }
     };
+
+    // 从全局任务恢复选择 / 分析 / API 下拉：退出世界书再回来，结果不会因为组件卸载而丢
+    useEffect(() => {
+        if (dedupeTask.status === 'idle') return;
+        if (dedupeTask.selectedBookIds.length > 0) {
+            setSelectedDedupeIds(prev => {
+                const next = new Set(dedupeTask.selectedBookIds);
+                if (prev.size !== next.size || [...prev].some(id => !next.has(id))) return next;
+                return prev;
+            });
+        }
+        if (dedupeTask.aiChoiceId) setDedupeAiChoiceId(dedupeTask.aiChoiceId);
+        if (dedupeTask.analysis) setDedupeAnalysis(dedupeTask.analysis);
+    }, [dedupeTask.status, dedupeTask.selectedBookIds, dedupeTask.aiChoiceId, dedupeTask.analysis]);
+
+    // 用户点了开始 / 完成 toast / 查看按钮：打开去重面板并跳到对应状态
+    useEffect(() => {
+        if (!dedupeTask.focusRequestAt || dedupeTask.status === 'idle') return;
+        setDedupeMode(true);
+        requestAnimationFrame(() => {
+            document.getElementById('worldbook-dedup-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        worldbookDedupTaskStore.update(prev => ({ ...prev, focusRequestAt: undefined }));
+    }, [dedupeTask.focusRequestAt, dedupeTask.status]);
 
     // --- Render ---
 
@@ -738,8 +817,55 @@ const WorldbookApp: React.FC = () => {
                     </p>
                 </div>
 
+                {/* 后台任务提示条：退出世界书再回来，也能一眼看到 AI 深度检查还在跑 / 已有结果 */}
+                {dedupeTask.status !== 'idle' && !dedupeMode && (
+                    <div className={`rounded-2xl border p-3 shadow-sm backdrop-blur-md ${dedupeTask.status === 'running'
+                        ? 'border-indigo-100 bg-indigo-50/80'
+                        : dedupeTask.status === 'error' || dedupeTask.status === 'interrupted'
+                            ? 'border-amber-100 bg-amber-50/80'
+                            : 'border-emerald-100 bg-emerald-50/80'}`}>
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-2 min-w-0">
+                                {dedupeTask.status === 'running' ? (
+                                    <span className="mt-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+                                ) : (
+                                    <span className="text-base leading-none mt-0.5 shrink-0">
+                                        {dedupeTask.status === 'done' ? '✅' : '⚠️'}
+                                    </span>
+                                )}
+                                <div className="min-w-0">
+                                    <div className={`text-xs font-bold ${dedupeTask.status === 'running'
+                                        ? 'text-indigo-700'
+                                        : dedupeTask.status === 'done'
+                                            ? 'text-emerald-700'
+                                            : 'text-amber-700'}`}>
+                                        {dedupeTask.status === 'running'
+                                            ? 'AI 深度检查正在后台运行'
+                                            : dedupeTask.status === 'done'
+                                                ? 'AI 深度检查已完成'
+                                                : dedupeTask.status === 'interrupted'
+                                                    ? '上次的 AI 深度检查被中断'
+                                                    : 'AI 深度检查失败'}
+                                    </div>
+                                    <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                                        {dedupeTask.status === 'running'
+                                            ? '退出世界书也会继续，完成后会弹出提醒；回来后点“查看进度”看当前状态。'
+                                            : (dedupeTask.result?.replace(/^\[(ok|err|warn)\]/, '') ?? '点这里查看结果')}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={openDedupePanel}
+                                className="shrink-0 rounded-xl bg-white/90 px-3 py-2 text-[11px] font-bold text-slate-600 border border-white shadow-sm active:scale-95 transition-transform hover:bg-white"
+                            >
+                                {dedupeTask.status === 'running' ? '查看进度' : '查看结果'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {dedupeMode && (
-                    <div className="rounded-2xl border border-slate-200/80 bg-white/85 backdrop-blur-md p-4 shadow-sm text-slate-600 animate-slide-up">
+                    <div id="worldbook-dedup-panel" className="rounded-2xl border border-slate-200/80 bg-white/85 backdrop-blur-md p-4 shadow-sm text-slate-600 animate-slide-up">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
@@ -760,19 +886,21 @@ const WorldbookApp: React.FC = () => {
                         <div className="grid grid-cols-3 gap-2 mt-4">
                             <button
                                 onClick={selectAllForDedupe}
-                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform"
+                                disabled={isDedupeAiReviewing}
+                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
                                 全选
                             </button>
                             <button
                                 onClick={clearDedupeSelection}
-                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform"
+                                disabled={isDedupeAiReviewing}
+                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
                                 清空
                             </button>
                             <button
                                 onClick={runDedupeAnalysis}
-                                disabled={selectedDedupeBooks.length < 2}
+                                disabled={selectedDedupeBooks.length < 2 || isDedupeAiReviewing}
                                 className="py-2.5 rounded-xl bg-indigo-500 text-white text-xs font-bold shadow-sm shadow-indigo-200 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
                                 快速检测
@@ -795,6 +923,19 @@ const WorldbookApp: React.FC = () => {
                                     {isDedupeAiReviewing ? '检查中…' : 'AI 深度检查'}
                                 </button>
                             </div>
+                            {isDedupeAiReviewing && (
+                                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-[11px] leading-relaxed text-indigo-700">
+                                    <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse mr-1.5" />
+                                    后台检查中… 退出世界书也会继续，完成后会弹出提醒。
+                                </div>
+                            )}
+                            {!isDedupeAiReviewing && dedupeTask.status !== 'idle' && dedupeTask.result && (
+                                <div className={`mt-3 rounded-xl border px-3 py-2 text-[11px] leading-relaxed ${dedupeTask.status === 'error' || dedupeTask.status === 'interrupted'
+                                    ? 'border-amber-100 bg-amber-50/80 text-amber-700'
+                                    : 'border-emerald-100 bg-emerald-50/80 text-emerald-700'}`}>
+                                    {dedupeTask.result.replace(/^\[(ok|err|warn)\]/, '')}
+                                </div>
+                            )}
                             <div className="mt-3 space-y-1.5">
                                 <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">本次使用</label>
                                 <select
@@ -990,7 +1131,8 @@ const WorldbookApp: React.FC = () => {
                             {dedupeMode && (
                                 <button
                                     onClick={(event) => toggleDedupeCategory(event, books)}
-                                    className="ml-auto px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/70 text-indigo-500 border border-indigo-100 active:scale-95 transition-transform"
+                                    disabled={isDedupeAiReviewing}
+                                    className="ml-auto px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/70 text-indigo-500 border border-indigo-100 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                                 >
                                     {books.every(book => selectedDedupeIds.has(book.id)) ? '取消本组' : '选本组'}
                                 </button>
@@ -1017,7 +1159,8 @@ const WorldbookApp: React.FC = () => {
                                             <button
                                                 type="button"
                                                 onClick={(event) => { event.stopPropagation(); toggleDedupeSelection(book.id); }}
-                                                className={`mt-0.5 w-6 h-6 rounded-full border flex items-center justify-center shrink-0 transition-all ${selectedDedupeIds.has(book.id) ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm shadow-indigo-200' : 'bg-white/80 border-slate-200 text-transparent'}`}
+                                                disabled={isDedupeAiReviewing}
+                                                className={`mt-0.5 w-6 h-6 rounded-full border flex items-center justify-center shrink-0 transition-all disabled:opacity-40 ${selectedDedupeIds.has(book.id) ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm shadow-indigo-200' : 'bg-white/80 border-slate-200 text-transparent'}`}
                                                 title={selectedDedupeIds.has(book.id) ? '取消选择' : '选择这本'}
                                             >
                                                 <Check size={13} weight="bold" />
