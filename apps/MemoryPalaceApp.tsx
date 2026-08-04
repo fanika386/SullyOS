@@ -564,11 +564,15 @@ export default function MemoryPalaceApp() {
     // 再点回来时进度、候选、结果都能从 store 恢复，不会因为组件卸载而丢。
     const dedupTask = useDedupTask();
     const deduping = dedupTask.status === 'running';
-    const dedupResult = dedupTask.result;
-    const dedupReviewPreview = dedupTask.status === 'review' ? dedupTask.preview : null;
+    // 任务属于哪个角色就只在哪个角色的「个人记忆管理」里展示，
+    // 避免 A 角色的报错/候选/进度串到 B、C 角色的设置页。
+    const dedupTaskOwnedByCurrentChar = !!char && dedupTask.scope.charIds.includes(char.id);
+    const dedupResult = dedupTaskOwnedByCurrentChar ? dedupTask.result : null;
+    const dedupReviewPreview = dedupTask.status === 'review' && dedupTaskOwnedByCurrentChar ? dedupTask.preview : null;
     // 步骤小字播放器：每个阶段至少停留 DEDUP_STEP_MIN_MS 才切换，
     // 任务跑得再快，也会把收到的阶段排队逐帧播完；慢任务则实时跟着更新。
     const [displayDedupProgress, setDisplayDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
+    const shownDedupProgress = dedupTaskOwnedByCurrentChar ? displayDedupProgress : null;
     const dedupBaseRef = React.useRef<{ done: number; total: number; label: string; step?: string } | null>(null);
     const dedupActiveRef = React.useRef(false);
     const dedupStepQueueRef = React.useRef<Array<{ step: string; at: number }>>([]);
@@ -1867,6 +1871,10 @@ export default function MemoryPalaceApp() {
         selectedNodes: MemoryNode[],
     ) => {
         if (deduping || dedupMergingGroupKey) return;
+        if (!char || !dedupTask.scope.charIds.includes(char.id) || group.charId !== char.id) {
+            dedupTaskStore.set({ result: '[warn]这个候选组属于其他角色，请先切回对应角色再整理' });
+            return;
+        }
         if (selectedNodes.length === 0) {
             dedupTaskStore.set({ result: '[warn]先勾选要一起整理的候选记忆' });
             return;
@@ -1897,6 +1905,11 @@ export default function MemoryPalaceApp() {
     const handleSaveDedupMergedMemory = async (deleteSources: boolean) => {
         if (!dedupMergeDraft || deduping) return;
         const { sourceNodes, draft } = dedupMergeDraft;
+        const currentTask = dedupTaskStore.get();
+        if (!char || !currentTask.scope.charIds.includes(char.id) || sourceNodes[0].charId !== char.id) {
+            dedupTaskStore.set({ result: '[warn]这个合并草稿属于其他角色，请先切回对应角色再保存' });
+            return;
+        }
         const content = draft.content.trim();
         if (!content) {
             dedupTaskStore.set({ result: '[warn]合并后的新记忆正文不能为空' });
@@ -2118,6 +2131,10 @@ export default function MemoryPalaceApp() {
     const handleDeleteSelectedAiDedupMemories = async () => {
         const task = dedupTaskStore.get();
         if (task.status !== 'review' || !task.preview) return;
+        if (!char || !task.scope.charIds.includes(char.id)) {
+            dedupTaskStore.set({ result: '[warn]当前去重任务属于其他角色，请先切回对应角色再操作' });
+            return;
+        }
         const selectedPreview = buildSelectedDedupPreview(task.preview, dedupSelectedDeleteIds);
         if (selectedPreview.duplicateCount === 0) {
             dedupTaskStore.set({ result: '[warn]还没有勾选要删除的重复记忆' });
@@ -4756,31 +4773,31 @@ create table if not exists memory_vectors (
                         </div>
                     )}
 
-                    {displayDedupProgress && (
+                    {shownDedupProgress && (
                         <div style={{
                             marginBottom: 10, padding: 10, borderRadius: 12,
                             background: '#eef2ff', border: '1px solid #c7d2fe',
                         }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
                                 <span style={{ fontSize: 11, fontWeight: 800, color: '#3730a3' }}>
-                                    {displayDedupProgress.label}
+                                    {shownDedupProgress.label}
                                 </span>
                                 <span style={{ fontSize: 10, fontWeight: 800, color: '#4f46e5' }}>
-                                    {displayDedupProgress.done}/{displayDedupProgress.total}
+                                    {shownDedupProgress.done}/{shownDedupProgress.total}
                                 </span>
                             </div>
                             <div style={{ height: 7, borderRadius: 999, overflow: 'hidden', background: '#e0e7ff' }}>
                                 <div style={{
-                                    width: `${Math.max(8, Math.min(100, Math.round((displayDedupProgress.done / Math.max(1, displayDedupProgress.total)) * 100)))}%`,
+                                    width: `${Math.max(8, Math.min(100, Math.round((shownDedupProgress.done / Math.max(1, shownDedupProgress.total)) * 100)))}%`,
                                     height: '100%', borderRadius: 999,
                                     background: 'linear-gradient(90deg, #6366f1, #0ea5e9)',
                                     transition: 'width 180ms ease',
                                 }} />
                             </div>
-                            {displayDedupProgress.step && (
+                            {shownDedupProgress.step && (
                                 <div style={{ fontSize: 11, color: '#3730a3', marginTop: 7, lineHeight: 1.55, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
                                     <span className="animate-dot-pulse" style={{ width: 6, height: 6, borderRadius: 999, background: '#6366f1', marginTop: 4, flexShrink: 0 }} />
-                                    <span>{displayDedupProgress.step}</span>
+                                    <span>{shownDedupProgress.step}</span>
                                 </div>
                             )}
                             {deduping && (
@@ -5005,7 +5022,7 @@ create table if not exists memory_vectors (
                             cursor: deduping ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {deduping ? '处理中…' : (
+                        {deduping ? (dedupTaskOwnedByCurrentChar ? '处理中…' : `「${dedupTask.scope.ownerName || '其他角色'}」去重中…`) : (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                                 <Icon name="trash" size={13} />
                                 <span>{dedupMode === 'ai' ? 'AI 扫描语义重复' : dedupMode === 'semantic' ? '扫描近似重复记忆' : '扫描完全重复记忆'}</span>
@@ -5160,8 +5177,8 @@ create table if not exists memory_vectors (
                         </div>
                     </div>
 
-                    {/* 去重任务结果提示条：退出页面后回来也能一眼看到 */}
-                    {dedupTask.status !== 'idle' && dedupTask.status !== 'running' && (
+                    {/* 去重任务结果提示条：退出页面后回来也能一眼看到（只显示属于当前角色的任务） */}
+                    {dedupTaskOwnedByCurrentChar && dedupTask.status !== 'idle' && dedupTask.status !== 'running' && (
                         <div style={{
                             marginTop: 12, padding: '10px 12px', borderRadius: 12,
                             display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, lineHeight: 1.5,
