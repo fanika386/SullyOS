@@ -2030,17 +2030,18 @@ export default function MemoryPalaceApp() {
                         const owner = charNameById[charId] || charId;
                         const batchPart = total > 1 ? `（第 ${completed}/${total} 批）` : '';
                         dedupTaskStore.set({
-                            progress: { done: completed, total, label: owner, step: `AI 正在扫描「${owner}」的记忆${batchPart}…` },
-                            result: `AI 正在扫描${scopeLabel} · ${completed}/${total}：${owner}…（会产生 API 用量）`,
+                            progress: { done: completed, total, label: owner, step: `AI 正在确认「${owner}」的候选组${batchPart}…` },
+                            result: `AI 正在确认候选组 · ${completed}/${total}：${owner}…（会产生 API 用量）`,
                         });
                     },
                 });
 
                 if (preview.duplicateCount === 0) {
+                    const vectorPart = preview.vectorizedCount != null ? `（${preview.vectorizedCount} 条有向量）` : '';
                     dedupTaskStore.set({
                         status: 'done',
                         progress: null,
-                        result: `[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，没有发现可合并的语义重复项`,
+                        result: `[ok]${scopeLabel} · ${modeLabel}：本地向量预筛 ${preview.scannedCount} 条记忆${vectorPart}，AI 确认 ${preview.aiCallCount || 0} 组候选，没有发现可删除的重复项`,
                         finishedAt: Date.now(),
                     });
                     addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，点这里查看结果`, 'success', 8000, jumpToDedupResult);
@@ -2051,7 +2052,7 @@ export default function MemoryPalaceApp() {
                     status: 'review',
                     preview,
                     progress: null,
-                    result: `[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，找到 ${preview.groups.length} 组候选、${preview.duplicateCount} 条建议删除项。AI 候选默认不勾选，请逐条确认后再删除。`,
+                    result: `[ok]${scopeLabel} · ${modeLabel}：本地向量预筛 ${preview.scannedCount} 条记忆${preview.vectorizedCount != null ? `（${preview.vectorizedCount} 条有向量）` : ''}，AI 确认 ${preview.aiCallCount || 0} 组候选，找到 ${preview.groups.length} 组重复、${preview.duplicateCount} 条建议删除项。AI 候选默认不勾选，请逐条确认后再删除。`,
                     finishedAt: Date.now(),
                 });
                 setDedupSelectedDeleteIds(new Set());
@@ -4693,7 +4694,7 @@ create table if not exists memory_vectors (
                             </div>
                             <div style={{ fontSize: 10, color: '#64748b', marginTop: 6, lineHeight: 1.6 }}>
                                 {dedupMode === 'ai'
-                                    ? 'AI 会读取所选范围内的记忆正文，判断“意思完全重复”的候选；它只给建议，不会自动删除。'
+                                    ? 'AI 模式会先在本地用向量预筛候选组，再把候选组交给 AI 确认，比全量两两比对快很多；它只给建议，不会自动删除。'
                                     : dedupMode === 'semantic'
                                     ? `近似语义会比较已有向量，相似度达到 ${(SEMANTIC_DEDUP_THRESHOLD * 100).toFixed(0)}% 才列入候选；没有向量的记忆会跳过。`
                                     : '精确模式只删除正文完全一样的重复记忆，最稳。'}

@@ -114,6 +114,8 @@ interface AiAcceptedDuplicateCandidate {
 }
 
 const DEFAULT_AI_DUPLICATE_MIN_CONFIDENCE = 0.92;
+/** AI 模式第一阶段：本地向量召回阈值。故意调低，宁可多捞候选，再交给 AI 确认。 */
+const AI_DEDUP_RECALL_THRESHOLD = 0.85;
 const AI_DETAIL_EXTRA_CHARS = 8;
 const AI_DETAIL_EXTRA_RATIO = 1.15;
 const MEMORY_ROOMS = Object.keys(ROOM_LABELS) as MemoryRoom[];
@@ -832,38 +834,76 @@ export async function scanAiSemanticDuplicateMemories(
     const nodes = (allowed ? allNodes.filter(node => allowed.has(node.charId)) : allNodes)
         .filter(node => hasComparableContent(node, minContentLength));
     const charIds = new Set(nodes.map(node => node.charId));
-    const nodesByChar = new Map<string, MemoryNode[]>();
-    for (const node of nodes) {
-        const bucket = nodesByChar.get(node.charId);
-        if (bucket) bucket.push(node);
-        else nodesByChar.set(node.charId, [node]);
+
+    // 第一阶段（本地、免费）：先抓正文完全相同的，再用低阈值向量召回「换汤不换药」的改写重复。
+    options.onStep?.('正在本地比对精确重复…');
+    const exactPreview = findExactDuplicateMemoryGroups(nodes);
+    const exactGroups = exactPreview.groups;
+    const exactCoveredIds = new Set<string>();
+    for (const group of exactGroups) {
+        for (const node of group.nodes) exactCoveredIds.add(node.id);
     }
 
-    const charBatches = Array.from(nodesByChar.entries()).filter(([, charNodes]) => charNodes.length >= 2);
-    options.onStep?.(charBatches.length > 0 ? '正在调用 AI 扫描记忆…' : '正在汇总 AI 候选…');
-    const groups: ExactDuplicateMemoryGroup[] = [];
-    let completed = 0;
+    options.onStep?.('正在用向量预筛候选组…');
+    const recallPreview = await scanSemanticDuplicateMemories({
+        charIds: options.charIds,
+        threshold: AI_DEDUP_RECALL_THRESHOLD,
+        minContentLength: 8,
+        onStep: (step) => options.onStep?.(`本地预筛：${step}`),
+    });
 
-    for (const [charId, charNodes] of charBatches) {
-        const charName = options.charNameById?.[charId] || charId;
-        const batchPart = charBatches.length > 1 ? `（第 ${completed + 1}/${charBatches.length} 批）` : '';
-        options.onStep?.(`AI 正在分析「${charName}」的 ${charNodes.length} 条记忆${batchPart}…`);
+    // 语义召回组里已被精确组覆盖的节点不再重复处理；若还有残余候选，
+    // 带上组内最值得保留的已覆盖节点一起交给 AI 确认。
+    const pendingConfirm: Array<{ charId: string; nodes: MemoryNode[] }> = [];
+    for (const group of recallPreview.groups) {
+        const residual = group.nodes.filter(node => !exactCoveredIds.has(node.id));
+        if (residual.length === 0) continue;
+        const coveredKeep = group.nodes
+            .filter(node => exactCoveredIds.has(node.id))
+            .sort(compareCanonicalNode)[0];
+        const candidateNodes = (coveredKeep ? [coveredKeep, ...residual] : residual)
+            .filter((node, idx, arr) => arr.findIndex(n => n.id === node.id) === idx);
+        if (candidateNodes.length < 2) continue;
+        pendingConfirm.push({
+            charId: group.charId,
+            nodes: candidateNodes.slice().sort(compareCanonicalNode),
+        });
+    }
+
+    // 第二阶段（AI 确认）：只把候选组发给模型，prompt 小、输出小，比全量两两比对快很多。
+    const confirmedGroups: ExactDuplicateMemoryGroup[] = [];
+    const confirmedDuplicateIds = new Set<string>();
+    let completed = 0;
+    const totalConfirm = pendingConfirm.length;
+    options.onStep?.(totalConfirm > 0 ? `AI 正在确认 ${totalConfirm} 组候选…` : '正在汇总 AI 候选…');
+    for (const batch of pendingConfirm) {
+        const charName = options.charNameById?.[batch.charId] || batch.charId;
+        options.onStep?.(`AI 正在确认候选组 ${completed + 1}/${totalConfirm}（「${charName}」）…`);
         const raw = await requestAiDuplicateSuggestions(
-            charId,
-            options.charNameById?.[charId] || charId,
-            charNodes,
+            batch.charId,
+            charName,
+            batch.nodes,
             llmConfig,
             options.onStream,
         );
-        const preview = buildAiDuplicatePreviewFromSuggestions(charNodes, raw, {
+        const preview = buildAiDuplicatePreviewFromSuggestions(batch.nodes, raw, {
             minConfidence: options.minConfidence,
         });
-        groups.push(...preview.groups);
+        for (const group of preview.groups) {
+            // 精确组已覆盖的节点不能再次进删除清单
+            const duplicates = group.duplicates.filter(node =>
+                !exactCoveredIds.has(node.id) && !confirmedDuplicateIds.has(node.id)
+            );
+            if (duplicates.length === 0) continue;
+            for (const node of duplicates) confirmedDuplicateIds.add(node.id);
+            confirmedGroups.push({ ...group, duplicates, nodes: [group.keep, ...duplicates] });
+        }
         completed++;
-        options.onProgress?.(completed, charBatches.length, charId);
+        options.onProgress?.(completed, totalConfirm, batch.charId);
     }
 
     options.onStep?.('正在汇总 AI 候选…');
+    const groups = [...exactGroups, ...confirmedGroups];
     groups.sort((a, b) => {
         if (a.charId !== b.charId) return a.charId.localeCompare(b.charId);
         return a.keep.createdAt - b.keep.createdAt;
@@ -874,7 +914,9 @@ export async function scanAiSemanticDuplicateMemories(
         charCount: charIds.size,
         groups,
         duplicateCount: groups.reduce((sum, group) => sum + group.duplicates.length, 0),
-        aiCallCount: charBatches.length,
+        vectorizedCount: recallPreview.vectorizedCount,
+        aiCallCount: completed,
+        threshold: AI_DEDUP_RECALL_THRESHOLD,
     };
 }
 
