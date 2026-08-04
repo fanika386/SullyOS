@@ -13,6 +13,7 @@ import { ContextBuilder } from '../utils/context';
 import { formatMessageWithTime, formatMessageForPrompt } from '../utils/messageFormat';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
+import BuiltInPromptSettingsCard from '../components/character/BuiltInPromptSettingsCard';
 import RoomPlatePanel from '../components/character/RoomPlatePanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
 import ChibiStudio, { ChibiShelfPanel } from '../components/character/ChibiStudio';
@@ -1387,6 +1388,19 @@ ${isInitialGeneration ? `
                                    </div>
                                </div>
                            </div>
+
+                           {/* 内置提示词：SullyOS 自带行为规则与功能提示词开关（原在聊天设置弹窗，已挪到角色设定页） */}
+                           <BuiltInPromptSettingsCard
+                               settings={formData.builtInPromptSettings}
+                               onUpdate={(patch) => {
+                                   const next = { ...(formData.builtInPromptSettings || {}), ...patch };
+                                   handleChange('builtInPromptSettings', next);
+                                   // 与旧聊天设置的同步逻辑保持一致：新「时间 / 现实状态」开关变动时联动旧字段。
+                                   if (typeof patch.timeAwareness === 'boolean') {
+                                       handleChange('timeAwarenessEnabled', patch.timeAwareness);
+                                   }
+                               }}
+                           />
 
                            {/* 生活记录注入：总开关 + 4 个模块小开关（数据在档案 App「生活记录」里维护） */}
                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">

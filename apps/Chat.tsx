@@ -2863,15 +2863,6 @@ const Chat: React.FC = () => {
                 onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
                 htmlModeCustomPrompt={settingsHtmlModeCustomPrompt}
                 setHtmlModeCustomPrompt={setSettingsHtmlModeCustomPrompt}
-                builtInPromptSettings={char.builtInPromptSettings}
-                onUpdateBuiltInPromptSettings={(patch) => {
-                    const nextSettings = { ...(char.builtInPromptSettings || {}), ...patch };
-                    const update: any = { builtInPromptSettings: nextSettings };
-                    if (typeof patch.timeAwareness === 'boolean') {
-                        update.timeAwarenessEnabled = patch.timeAwareness;
-                    }
-                    updateCharacter(char.id, update);
-                }}
                 chatVoiceEnabled={!!char.chatVoiceEnabled}
                 onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
                 chatVoiceLang={char.chatVoiceLang || ''}
