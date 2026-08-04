@@ -40,6 +40,7 @@ import {
     makeGroupTopicBox,
     planGroupTopicBatch,
 } from '../utils/groupChat/topicBoxes';
+import { isNearBottom, shouldAutoScrollToBottom, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -372,6 +373,7 @@ const GroupChat: React.FC = () => {
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const MESSAGE_PAGE_SIZE = 50;
     const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE_SIZE);
+    const [showJumpToLatest, setShowJumpToLatest] = useState(false);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [mcpStatus, setMcpStatus] = useState('');
@@ -443,6 +445,7 @@ const GroupChat: React.FC = () => {
     
     // Refs
     const scrollRef = useRef<HTMLDivElement>(null);
+    const stickToBottomRef = useRef(true);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const groupAvatarInputRef = useRef<HTMLInputElement>(null);
     // 生成中的取消句柄：非空 = 正在生成，再点触发按钮 = 停止
@@ -455,6 +458,8 @@ const GroupChat: React.FC = () => {
     // Initial Load
     useEffect(() => {
         if (activeGroup) {
+            stickToBottomRef.current = true;
+            setShowJumpToLatest(false);
             setVisibleCount(MESSAGE_PAGE_SIZE);
             DB.getRecentGroupMessagesWithCount(activeGroup.id, MESSAGE_PAGE_SIZE).then(({ messages: msgs, totalCount }) => {
                 setMessages(msgs);
@@ -470,10 +475,38 @@ const GroupChat: React.FC = () => {
 
     // Auto Scroll
     useLayoutEffect(() => {
-        if (scrollRef.current && !selectionMode) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        const el = scrollRef.current;
+        setShowJumpToLatest(prev => {
+            const next = shouldShowJumpToLatest({
+                stickToBottom: stickToBottomRef.current,
+                blocked: selectionMode,
+                generating: isTyping,
+            });
+            return next === prev ? prev : next;
+        });
+        if (el && shouldAutoScrollToBottom({
+            hasContainer: true,
+            stickToBottom: stickToBottomRef.current,
+            blocked: selectionMode,
+            shouldFollow: true,
+        })) {
+            el.scrollTop = el.scrollHeight;
         }
     }, [messages.length, activeGroup, showPanel, isTyping, selectionMode]);
+
+    const handleGroupChatScroll = () => {
+        const el = scrollRef.current;
+        if (!el) return;
+        stickToBottomRef.current = isNearBottom(el);
+        setShowJumpToLatest(prev => {
+            const next = shouldShowJumpToLatest({
+                stickToBottom: stickToBottomRef.current,
+                blocked: selectionMode,
+                generating: isTyping,
+            });
+            return next === prev ? prev : next;
+        });
+    };
 
     // 白框提示音：成员新发的消息成为群里最后一条时响一次（用户自己/翻旧消息不响）。
     // 逻辑对齐私聊 Chat.tsx——切群只记基线不播、回合内多气泡只响首条、基线只增不减。
@@ -1553,7 +1586,7 @@ ${privateStateBlock ? `\n${privateStateBlock}\n` : ''}
             />
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 bg-[#f0f4f8]" ref={scrollRef}>
+            <div className="flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 bg-[#f0f4f8]" ref={scrollRef} onScroll={handleGroupChatScroll}>
                 {collapsedCount > 0 && activeGroup && (
                     <div className="flex justify-center mb-6">
                         <button onClick={async () => {
@@ -1597,6 +1630,23 @@ ${privateStateBlock ? `\n${privateStateBlock}\n` : ''}
                             <div className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white"></div>
                         </div>
                         <span className="text-xs text-slate-400 font-medium">{mcpStatus || '成员正在输入...'}</span>
+                    </div>
+                )}
+                {showJumpToLatest && (
+                    <div className="sticky bottom-3 z-20 flex justify-center pb-2 pointer-events-none">
+                        <button
+                            onClick={() => {
+                                const el = scrollRef.current;
+                                if (!el) return;
+                                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+                                stickToBottomRef.current = true;
+                                setShowJumpToLatest(false);
+                            }}
+                            className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" /></svg>
+                            回到最新
+                        </button>
                     </div>
                 )}
             </div>

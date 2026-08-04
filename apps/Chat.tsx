@@ -51,6 +51,7 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+import { isNearBottom, shouldAutoScrollToBottom, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -82,6 +83,7 @@ const Chat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [windowedFocusMsgId, setWindowedFocusMsgId] = useState<number | null>(null);
     const [flashMsgId, setFlashMsgId] = useState<number | null>(null);
+    const [showJumpToLatest, setShowJumpToLatest] = useState(false);
     // 角色切换/进入时的缓入开关：先 false（透明），下一帧转 true，靠 CSS transition 平滑淡入。
     // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
@@ -100,6 +102,7 @@ const Chat: React.FC = () => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const lastMsgIdRef = useRef<number | null>(null);
     const scrollThrottleRef = useRef(0);
+    const stickToBottomRef = useRef(true);
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
     // 流式预览接棒过的正式消息在当前会话内始终跳过入场动画，避免后续 DB 刷新时动画类又被加回来。
@@ -709,6 +712,8 @@ const Chat: React.FC = () => {
             setShowingTargetIds(new Set());
             setWindowedFocusMsgId(null);
             setFlashMsgId(null);
+            stickToBottomRef.current = true;
+            setShowJumpToLatest(false);
             try {
                 const rawToolStatus = localStorage.getItem(`instant_tool_status_${activeCharacterId}`);
                 const parsed = rawToolStatus ? JSON.parse(rawToolStatus) as InstantToolUiStatus : null;
@@ -839,7 +844,12 @@ const Chat: React.FC = () => {
         // not when loading older history or updating existing messages in-place.
         // windowed 模式下用户在翻旧消息，不要被新消息打断滚走。
         if (currentLastId !== lastMsgIdRef.current) {
-            if (windowedFocusMsgId === null) {
+            if (shouldAutoScrollToBottom({
+                hasContainer: true,
+                stickToBottom: stickToBottomRef.current,
+                blocked: windowedFocusMsgId !== null,
+                shouldFollow: true,
+            })) {
                 scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
             }
             lastMsgIdRef.current = currentLastId;
@@ -847,7 +857,15 @@ const Chat: React.FC = () => {
     }, [messages, activeCharacterId, selectionMode, windowedFocusMsgId]);
 
     useEffect(() => {
-        if (isTyping && scrollRef.current && !selectionMode && windowedFocusMsgId === null) {
+        setShowJumpToLatest(prev => {
+            const next = shouldShowJumpToLatest({
+                stickToBottom: stickToBottomRef.current,
+                blocked: selectionMode || windowedFocusMsgId !== null,
+                generating: isTyping || streamingBubbles.length > 0 || streamingThinking.length > 0,
+            });
+            return next === prev ? prev : next;
+        });
+        if (isTyping && scrollRef.current && !selectionMode && windowedFocusMsgId === null && stickToBottomRef.current) {
             const now = Date.now();
             if (now - scrollThrottleRef.current > 150) {
                 scrollThrottleRef.current = now;
@@ -855,6 +873,20 @@ const Chat: React.FC = () => {
             }
         }
     }, [messages, isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, selectionMode, windowedFocusMsgId]);
+
+    const handleChatScroll = () => {
+        const el = scrollRef.current;
+        if (!el) return;
+        stickToBottomRef.current = isNearBottom(el);
+        setShowJumpToLatest(prev => {
+            const next = shouldShowJumpToLatest({
+                stickToBottom: stickToBottomRef.current,
+                blocked: selectionMode || windowedFocusMsgId !== null,
+                generating: isTyping || streamingBubbles.length > 0 || streamingThinking.length > 0,
+            });
+            return next === prev ? prev : next;
+        });
+    };
 
     // 白框提示音：当 char 新发的消息成为会话最后一条时播放一次（用户自己/历史/翻旧消息都不响）。
     // 声音配置编码在白框 CSS 注释里（角色 chromeCustomCss 覆盖全局 chatChromeCustomCss），随白框分享一起走。
@@ -905,6 +937,8 @@ const Chat: React.FC = () => {
             setWindowedFocusMsgId(null);
             setFlashMsgId(null);
         }
+        stickToBottomRef.current = true;
+        setShowJumpToLatest(false);
 
         // 用户手打"麦请求"三个字 → 等价于点击麦克风按钮 (拉起麦当劳菜单)
         // 不落库, 跟按钮点击行为完全一致, 避免出现"banner 在但菜单没拉起"的诡异状态
@@ -2037,6 +2071,8 @@ const Chat: React.FC = () => {
     const handleBackToCurrent = async () => {
         setWindowedFocusMsgId(null);
         setFlashMsgId(null);
+        stickToBottomRef.current = true;
+        setShowJumpToLatest(false);
         visibleCountRef.current = 30;
         setVisibleCount(30);
         await reloadMessages(30);
@@ -3048,7 +3084,7 @@ const Chat: React.FC = () => {
                 );
             })()}
 
-            <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+            <div ref={scrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {windowedFocusMsgId !== null && (
                     <div className="sticky top-0 z-20 flex justify-center pb-2 pointer-events-none">
                         <button onClick={handleBackToCurrent} className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5">
@@ -3256,6 +3292,23 @@ const Chat: React.FC = () => {
                                 <div className="flex gap-1"><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></div></div>
                             )}
                         </div>
+                    </div>
+                )}
+                {showJumpToLatest && (
+                    <div className="sticky bottom-3 z-20 flex justify-center pb-2 pointer-events-none">
+                        <button
+                            onClick={() => {
+                                const el = scrollRef.current;
+                                if (!el) return;
+                                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+                                stickToBottomRef.current = true;
+                                setShowJumpToLatest(false);
+                            }}
+                            className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" /></svg>
+                            回到最新
+                        </button>
                     </div>
                 )}
             </div>
