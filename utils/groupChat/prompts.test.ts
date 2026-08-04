@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildGroupHistoryBlock, buildMemberPrivateStateBlock, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
+import { buildGroupHistoryBlock, buildMemberPrivateStateBlock, buildRoundRobinInstruction, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
 import type { Message, CharacterProfile } from '../../types';
 
 const char = (id: string, name: string): CharacterProfile => ({ id, name } as CharacterProfile);
@@ -54,5 +54,32 @@ describe('buildMemberPrivateStateBlock 跟随角色开关', () => {
         rpChar.builtInPromptSettings = { chatStyle: false };
         const block = buildMemberPrivateStateBlock(rpChar, '刚刚', timeline);
         expect(block).toBe('');
+    });
+});
+
+describe('buildRoundRobinInstruction 跟随角色开关', () => {
+    const history = { text: '小夏: 在吗', attachedImages: [], attachedImagesNote: '' };
+
+    it('以角色本人为视角，默认保留对话质量与私聊感知规则', () => {
+        const ins = buildRoundRobinInstruction(char('c1', '小夏'), history, '通用: [哈哈]');
+        expect(ins).toContain('以「小夏」的身份在群里发言');
+        expect(ins).toContain('对话质量沿用你的私聊标准');
+        expect(ins).toContain('私聊空窗期');
+    });
+
+    it('antiFiller 关闭时不注入对话质量规则', () => {
+        const rpChar = char('c1', '小夏') as CharacterProfile & { builtInPromptSettings?: unknown };
+        rpChar.builtInPromptSettings = { antiFiller: false };
+        const ins = buildRoundRobinInstruction(rpChar, history, '通用: [哈哈]');
+        expect(ins).not.toContain('对话质量沿用你的私聊标准');
+        expect(ins).toContain('私聊空窗期');
+    });
+
+    it('chatStyle 关闭时不注入私聊感知规则', () => {
+        const rpChar = char('c1', '小夏') as CharacterProfile & { builtInPromptSettings?: unknown };
+        rpChar.builtInPromptSettings = { chatStyle: false };
+        const ins = buildRoundRobinInstruction(rpChar, history, '通用: [哈哈]');
+        expect(ins).not.toContain('私聊空窗期');
+        expect(ins).toContain('对话质量沿用你的私聊标准');
     });
 });
