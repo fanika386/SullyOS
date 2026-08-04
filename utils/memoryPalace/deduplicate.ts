@@ -745,35 +745,74 @@ async function requestAiDuplicateSuggestions(
 记忆列表 JSON：
 ${JSON.stringify(payload, null, 2)}`;
 
-    const data = await safeFetchJson(
-        `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
-        {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${llmConfig.apiKey}`,
-            },
-            body: JSON.stringify({
-                model: llmConfig.model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt },
-                ],
-                temperature: 0.1,
-                max_tokens: 4000,
-                stream: true,
-            }),
+    const chatUrl = `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const baseOptions: RequestInit = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${llmConfig.apiKey}`,
         },
-        1,
-        180_000,
-        { appName: '记忆宫殿', purpose: 'AI语义去重扫描', charId },
-        onStream ? { onDelta: (delta, fullText) => onStream(delta, fullText) } : undefined,
-    );
+    };
+    const callChatCompletion = async (stream: boolean): Promise<{ reply: string; streamedText: string }> => {
+        let streamedText = '';
+        const data = await safeFetchJson(
+            chatUrl,
+            {
+                ...baseOptions,
+                body: JSON.stringify({
+                    model: llmConfig.model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 5000,
+                    stream,
+                }),
+            },
+            1,
+            180_000,
+            { appName: '记忆宫殿', purpose: 'AI语义去重扫描', charId },
+            stream
+                ? {
+                    onDelta: (delta, fullText) => {
+                        streamedText = fullText;
+                        onStream?.(delta, fullText);
+                    },
+                }
+                : undefined,
+        );
+        const reply = typeof data?.choices?.[0]?.message?.content === 'string'
+            ? data.choices[0].message.content
+            : (streamedText || '');
+        return { reply, streamedText };
+    };
 
-    const reply = data.choices?.[0]?.message?.content || '';
-    const parsed = extractJson(reply);
+    let parsed: any = null;
+    let lastReply = '';
+    try {
+        const first = await callChatCompletion(true);
+        lastReply = first.reply;
+        parsed = extractJson(lastReply);
+        // 部分渠道把正文放在流式增量里但合成结构缺失，用流式文本兜底
+        if (!parsed && first.streamedText) {
+            lastReply = first.streamedText;
+            parsed = extractJson(lastReply);
+        }
+    } catch {
+        // 流式请求异常（例如渠道不支持 stream）：降级为非流式重试一次
+    }
     if (!parsed) {
-        throw new Error(`AI 没有返回可解析的 JSON：${reply.slice(0, 160)}`);
+        try {
+            const second = await callChatCompletion(false);
+            lastReply = second.reply;
+            parsed = extractJson(lastReply);
+        } catch (e: any) {
+            throw new Error(`AI 去重请求失败：${e?.message || e}`);
+        }
+    }
+    if (!parsed) {
+        throw new Error(`AI 没有返回可解析的 JSON（回复 ${lastReply.length} 字${lastReply ? `：${lastReply.slice(0, 120)}` : '，回复为空'}）`);
     }
     return parsed;
 }
