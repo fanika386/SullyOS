@@ -808,11 +808,11 @@ ${JSON.stringify(payload, null, 2)}`;
             lastReply = second.reply;
             parsed = extractJson(lastReply);
         } catch (e: any) {
-            throw new Error(`AI 去重请求失败：${e?.message || e}`);
+            throw new Error(`AI 去重请求失败（模型 ${llmConfig.model}）：${e?.message || e}`);
         }
     }
     if (!parsed) {
-        throw new Error(`AI 没有返回可解析的 JSON（回复 ${lastReply.length} 字${lastReply ? `：${lastReply.slice(0, 120)}` : '，回复为空'}）`);
+        throw new Error(`AI 没有返回可解析的 JSON（模型 ${llmConfig.model}，回复 ${lastReply.length} 字${lastReply ? `：${lastReply.slice(0, 120)}` : '，回复为空'}）`);
     }
     return parsed;
 }
