@@ -57,6 +57,8 @@ export interface AiSemanticDuplicateScanOptions extends ExactDuplicateScanOption
     minContentLength?: number;
     minConfidence?: number;
     onProgress?: (completed: number, total: number, charId: string) => void;
+    /** AI 回复流式回调（部分渠道不支持 stream 时不会触发，靠「已等待 N 秒」兜底） */
+    onStream?: (delta: string, fullText: string) => void;
 }
 
 export interface AiMergedMemoryDraft {
@@ -694,6 +696,7 @@ async function requestAiDuplicateSuggestions(
     charName: string,
     nodes: MemoryNode[],
     llmConfig: AiDuplicateLLMConfig,
+    onStream?: (delta: string, fullText: string) => void,
 ): Promise<unknown> {
     const payload = nodes.map(node => ({
         id: node.id,
@@ -757,13 +760,14 @@ ${JSON.stringify(payload, null, 2)}`;
                     { role: 'user', content: userPrompt },
                 ],
                 temperature: 0.1,
-                max_tokens: 6000,
-                stream: false,
+                max_tokens: 4000,
+                stream: true,
             }),
         },
         1,
         180_000,
         { appName: '记忆宫殿', purpose: 'AI语义去重扫描', charId },
+        onStream ? { onDelta: (delta, fullText) => onStream(delta, fullText) } : undefined,
     );
 
     const reply = data.choices?.[0]?.message?.content || '';
@@ -810,6 +814,7 @@ export async function scanAiSemanticDuplicateMemories(
             options.charNameById?.[charId] || charId,
             charNodes,
             llmConfig,
+            options.onStream,
         );
         const preview = buildAiDuplicatePreviewFromSuggestions(charNodes, raw, {
             minConfidence: options.minConfidence,

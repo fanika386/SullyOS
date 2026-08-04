@@ -575,6 +575,7 @@ export default function MemoryPalaceApp() {
     const dedupStepTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const dedupHideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const dedupWaitTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+    const dedupStreamTickRef = React.useRef(0);
     const dedupStartedAtRef = React.useRef(0);
     const displayedStepRef = React.useRef<string | null>(null);
 
@@ -606,6 +607,19 @@ export default function MemoryPalaceApp() {
             if (elapsed <= 0) return;
             setDisplayDedupProgress(prev => prev ? { ...prev, step: `${baseStep}（已等待 ${elapsed} 秒）` } : prev);
         }, 1000);
+    };
+
+    /** AI 回复流式到达时，把「已接收 N 字」实时贴到当前步骤上（限频，避免刷屏） */
+    const handleAiDedupStream = (delta: string, fullText: string) => {
+        const now = Date.now();
+        if (now - dedupStreamTickRef.current < 350) return;
+        dedupStreamTickRef.current = now;
+        clearDedupWaitTimer();
+        setDisplayDedupProgress(prev => {
+            if (!prev || !prev.step) return prev;
+            const base = prev.step.replace(/（已等待 \d+ 秒）$/, '').replace(/（已接收 \d+ 字）$/, '');
+            return { ...prev, step: `${base}（已接收 ${fullText.trim().length} 字）` };
+        });
     };
 
     const scheduleDedupHide = () => {
@@ -2008,6 +2022,7 @@ export default function MemoryPalaceApp() {
                     charIds: scanCharIds,
                     llmConfig: aiConfig.config,
                     charNameById,
+                    onStream: handleAiDedupStream,
                     onStep: (step) => dedupTaskStore.update(prev =>
                         prev.progress ? { ...prev, progress: { ...prev.progress, step } } : prev
                     ),
