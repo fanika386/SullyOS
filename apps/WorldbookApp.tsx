@@ -54,7 +54,7 @@ type ApiConfigWithWorldbookDedupe<T> = T & {
 };
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, openApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets } = useOS();
+    const { closeApp, openApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets, updateApiConfig } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -66,6 +66,16 @@ const WorldbookApp: React.FC = () => {
     const [selectedDedupeIds, setSelectedDedupeIds] = useState<Set<string>>(() => new Set());
     const [dedupeAnalysis, setDedupeAnalysis] = useState<WorldbookDuplicateAnalysis | null>(null);
     const [dedupeAiChoiceId, setDedupeAiChoiceId] = useState('');
+    // 去重专用 API 配置（可选）：默认跟随聊天 API，在这里单独配置便宜模型后保存。
+    const [showDedupeApiConfig, setShowDedupeApiConfig] = useState(false);
+    const [dedupeApiConfigSaved, setDedupeApiConfigSaved] = useState(false);
+    const [testingDedupeApi, setTestingDedupeApi] = useState(false);
+    const [dedupeApiTestResult, setDedupeApiTestResult] = useState<string | null>(null);
+    const initialDedicatedDedupeApi = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
+    const [dedupeDedicatedEnabled, setDedupeDedicatedEnabled] = useState(initialDedicatedDedupeApi?.enabled === true);
+    const [dedupeDedicatedUrl, setDedupeDedicatedUrl] = useState(initialDedicatedDedupeApi?.baseUrl || '');
+    const [dedupeDedicatedKey, setDedupeDedicatedKey] = useState(initialDedicatedDedupeApi?.apiKey || '');
+    const [dedupeDedicatedModel, setDedupeDedicatedModel] = useState(initialDedicatedDedupeApi?.model || '');
 
     // AI 深度检查任务放在全局 store：退出世界书 / 切到别的 OS App 后任务照常跑，
     // 回来时从 store 恢复选择、分析和结果（组件卸载不会中断异步请求）。
@@ -74,6 +84,15 @@ const WorldbookApp: React.FC = () => {
     const dedupeAiResult = dedupeTask.status === 'done' ? dedupeTask.aiResult : null;
 
     const PAGE_SIZE = 12;
+
+    // 表单与已保存的 apiConfig 保持同步（备份还原 / 其它端保存后自动刷新）
+    useEffect(() => {
+        const saved = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
+        setDedupeDedicatedEnabled(saved?.enabled === true);
+        setDedupeDedicatedUrl(saved?.baseUrl || '');
+        setDedupeDedicatedKey(saved?.apiKey || '');
+        setDedupeDedicatedModel(saved?.model || '');
+    }, [apiConfig]);
 
     // Edit Form State
     const [tempTitle, setTempTitle] = useState('');
@@ -394,6 +413,60 @@ const WorldbookApp: React.FC = () => {
         setSelectedDedupeIds(new Set());
         setDedupeAnalysis(null);
         clearDedupeTaskIfIdle();
+    };
+
+    const loadDedupeDedicatedPreset = (preset: typeof apiPresets[0]) => {
+        setDedupeDedicatedEnabled(true);
+        setDedupeDedicatedUrl(preset.config.baseUrl);
+        setDedupeDedicatedKey(preset.config.apiKey);
+        setDedupeDedicatedModel(preset.config.model);
+        addToast(`已选用预设: ${preset.name}`, 'info');
+    };
+
+    const handleSaveDedupeApiConfig = () => {
+        updateApiConfig({
+            worldbookDedupeApi: {
+                enabled: dedupeDedicatedEnabled,
+                baseUrl: dedupeDedicatedUrl,
+                apiKey: dedupeDedicatedKey,
+                model: dedupeDedicatedModel,
+            },
+        } as Partial<typeof apiConfig> & { worldbookDedupeApi: WorldbookDedupeAiApiDraft });
+        setDedupeApiConfigSaved(true);
+        addToast('世界书去重专用 API 已保存', 'success');
+        setTimeout(() => setDedupeApiConfigSaved(false), 2000);
+    };
+
+    const handleTestDedupeApi = async () => {
+        if (!dedupeDedicatedUrl.trim() || !dedupeDedicatedKey.trim() || !dedupeDedicatedModel.trim()) return;
+        setTestingDedupeApi(true);
+        setDedupeApiTestResult(null);
+        try {
+            const res = await fetch(`${dedupeDedicatedUrl.trim().replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${dedupeDedicatedKey.trim()}`,
+                },
+                body: JSON.stringify({
+                    model: dedupeDedicatedModel.trim(),
+                    messages: [{ role: 'user', content: 'Hi' }],
+                    max_tokens: 5,
+                }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const reply = (data.choices?.[0]?.message?.content || '').toString();
+                setDedupeApiTestResult(`[ok]连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
+            } else {
+                const text = await res.text().catch(() => '');
+                setDedupeApiTestResult(`[err]HTTP ${res.status}: ${text.slice(0, 120)}`);
+            }
+        } catch (error: any) {
+            setDedupeApiTestResult(`[err]连接失败: ${error?.message || error}`);
+        } finally {
+            setTestingDedupeApi(false);
+        }
     };
 
     const runDedupeAnalysis = () => {
@@ -955,6 +1028,114 @@ const WorldbookApp: React.FC = () => {
                                     <p className="text-[10px] leading-relaxed text-rose-500">
                                         当前选择缺 URL、Key 或模型，补齐后才能深度检查。
                                     </p>
+                                )}
+                            </div>
+
+                            <div className="mt-3 border-t border-emerald-100 pt-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDedupeApiConfig(v => !v)}
+                                    className="w-full flex items-center justify-between rounded-xl border border-emerald-100 bg-white/70 px-3 py-2 text-[11px] font-bold text-emerald-700 active:scale-[0.99] transition-transform"
+                                >
+                                    <span>去重专用 API 配置（可选）</span>
+                                    <span className={`text-emerald-500 transition-transform ${showDedupeApiConfig ? 'rotate-180' : ''}`}>▾</span>
+                                </button>
+                                {showDedupeApiConfig && (
+                                    <div className="mt-2 rounded-xl border border-emerald-100 bg-white/70 p-3 space-y-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="text-[11px] font-bold text-emerald-700">开启后使用专用模型</div>
+                                                <p className="mt-0.5 text-[10px] leading-relaxed text-emerald-700/70">
+                                                    默认跟随聊天 API；想给 AI 深检单独指定便宜模型就打开这里。只作用于世界书去重，不影响聊天和其它功能。
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDedupeDedicatedEnabled(v => !v)}
+                                                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${dedupeDedicatedEnabled ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                                aria-pressed={dedupeDedicatedEnabled}
+                                            >
+                                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${dedupeDedicatedEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                            </button>
+                                        </div>
+
+                                        {dedupeDedicatedEnabled && (
+                                            <div className="space-y-2.5 animate-slide-down">
+                                                {apiPresets.length > 0 && (
+                                                    <div>
+                                                        <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">从预设导入</label>
+                                                        <div className="flex gap-1.5 flex-wrap mt-1">
+                                                            {apiPresets.map(preset => (
+                                                                <button
+                                                                    key={preset.id}
+                                                                    type="button"
+                                                                    onClick={() => loadDedupeDedicatedPreset(preset)}
+                                                                    className="rounded-full border border-emerald-100 bg-white/90 px-2.5 py-1 text-[10px] font-bold text-emerald-700 active:scale-95 transition-transform"
+                                                                >
+                                                                    {preset.name}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                <div>
+                                                    <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">BASE URL</label>
+                                                    <input
+                                                        type="text"
+                                                        value={dedupeDedicatedUrl}
+                                                        onChange={e => setDedupeDedicatedUrl(e.target.value)}
+                                                        placeholder={apiConfig.baseUrl || '留空则跟随主 URL'}
+                                                        className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-mono text-emerald-800 outline-none focus:bg-white"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">API KEY</label>
+                                                    <input
+                                                        type="password"
+                                                        value={dedupeDedicatedKey}
+                                                        onChange={e => setDedupeDedicatedKey(e.target.value)}
+                                                        placeholder={apiConfig.apiKey ? '留空则跟随主 Key' : 'sk-...'}
+                                                        className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-mono text-emerald-800 outline-none focus:bg-white"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">MODEL</label>
+                                                    <input
+                                                        type="text"
+                                                        value={dedupeDedicatedModel}
+                                                        onChange={e => setDedupeDedicatedModel(e.target.value)}
+                                                        placeholder={apiConfig.model || '留空则跟随主 Model'}
+                                                        className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-mono text-emerald-800 outline-none focus:bg-white"
+                                                    />
+                                                    <p className="mt-1 text-[10px] leading-relaxed text-emerald-700/60">
+                                                        填任意一家便宜的对话模型即可，按主 API 一样的填法。保存后可在上方“本次使用”里选择“去重专用”。
+                                                    </p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSaveDedupeApiConfig}
+                                                        className={`flex-1 rounded-xl py-2 text-[11px] font-bold text-white active:scale-95 transition-transform ${dedupeApiConfigSaved ? 'bg-emerald-400' : 'bg-emerald-500'}`}
+                                                    >
+                                                        {dedupeApiConfigSaved ? '✓ 已保存' : '保存去重专用 API 配置'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleTestDedupeApi}
+                                                        disabled={testingDedupeApi || !dedupeDedicatedUrl.trim() || !dedupeDedicatedKey.trim() || !dedupeDedicatedModel.trim()}
+                                                        className="rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-bold text-emerald-700 active:scale-95 transition-transform disabled:opacity-50"
+                                                    >
+                                                        {testingDedupeApi ? '测试中…' : '测试连接'}
+                                                    </button>
+                                                </div>
+                                                {dedupeApiTestResult && (
+                                                    <div className={`rounded-lg px-2.5 py-1.5 text-[10px] leading-relaxed ${dedupeApiTestResult.startsWith('[ok]') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                                        {dedupeApiTestResult.replace(/^\[(ok|err)\]/, '')}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         </div>

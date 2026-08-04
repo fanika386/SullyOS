@@ -56,17 +56,6 @@ const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
 // 这里设为 false 只是把设置页里的入口隐藏掉，想恢复改回 true 即可。
 const SHOW_PROACTIVE_PUSH_ACCEL_UI = false;
 
-type WorldbookDedupeApiDraft = {
-    enabled?: boolean;
-    baseUrl?: string;
-    apiKey?: string;
-    model?: string;
-};
-
-type ApiConfigWithWorldbookDedupe<T> = T & {
-    worldbookDedupeApi?: WorldbookDedupeApiDraft;
-};
-
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
         <span className="text-slate-500 shrink-0">{label}</span>
@@ -363,8 +352,6 @@ const Settings: React.FC = () => {
       cloudBackupConfig, updateCloudBackupConfig,
       cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
   } = useOS();
-  const initialWorldbookDedupeApi = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
-  
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localModel, setLocalModel] = useState(apiConfig.model);
@@ -372,10 +359,6 @@ const Settings: React.FC = () => {
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
   );
-  const [localWorldbookDedupeEnabled, setLocalWorldbookDedupeEnabled] = useState(initialWorldbookDedupeApi?.enabled === true);
-  const [localWorldbookDedupeUrl, setLocalWorldbookDedupeUrl] = useState(initialWorldbookDedupeApi?.baseUrl || '');
-  const [localWorldbookDedupeKey, setLocalWorldbookDedupeKey] = useState(initialWorldbookDedupeApi?.apiKey || '');
-  const [localWorldbookDedupeModel, setLocalWorldbookDedupeModel] = useState(initialWorldbookDedupeApi?.model || '');
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(
@@ -684,11 +667,6 @@ const Settings: React.FC = () => {
       setLocalModel(apiConfig.model);
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
-      const worldbookDedupeApi = (apiConfig as ApiConfigWithWorldbookDedupe<typeof apiConfig>).worldbookDedupeApi;
-      setLocalWorldbookDedupeEnabled(worldbookDedupeApi?.enabled === true);
-      setLocalWorldbookDedupeUrl(worldbookDedupeApi?.baseUrl || '');
-      setLocalWorldbookDedupeKey(worldbookDedupeApi?.apiKey || '');
-      setLocalWorldbookDedupeModel(worldbookDedupeApi?.model || '');
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
@@ -710,14 +688,6 @@ const Settings: React.FC = () => {
       // MiniMax / AceStep settings are NOT overwritten by presets — typically one user
       // has only one MiniMax / Replicate account regardless of which LLM preset they use.
       addToast(`已加载配置: ${preset.name}`, 'info');
-  };
-
-  const loadWorldbookDedupePreset = (preset: typeof apiPresets[0]) => {
-      setLocalWorldbookDedupeEnabled(true);
-      setLocalWorldbookDedupeUrl(preset.config.baseUrl);
-      setLocalWorldbookDedupeKey(preset.config.apiKey);
-      setLocalWorldbookDedupeModel(preset.config.model);
-      addToast(`世界书去重 AI 已选用: ${preset.name}`, 'info');
   };
 
   const handleSavePreset = () => {
@@ -744,13 +714,7 @@ const Settings: React.FC = () => {
       model: localModel,
       stream: localStream,
       temperature: localTemperature,
-      worldbookDedupeApi: {
-        enabled: localWorldbookDedupeEnabled,
-        baseUrl: localWorldbookDedupeUrl,
-        apiKey: localWorldbookDedupeKey,
-        model: localWorldbookDedupeModel,
-      },
-    } as Partial<typeof apiConfig> & { worldbookDedupeApi: WorldbookDedupeApiDraft });
+    });
     setStatusMsg('配置已保存');
     setTimeout(() => setStatusMsg(''), 2000);
   };
@@ -1676,80 +1640,6 @@ const Settings: React.FC = () => {
                     </button>
                 </div>
 
-                <div className="rounded-2xl border border-emerald-100/70 bg-emerald-50/50 p-3 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                            <div className="text-xs font-bold text-emerald-700">世界书去重 AI</div>
-                            <p className="text-[10px] text-emerald-700/70 mt-0.5 leading-relaxed">
-                                关闭时跟随上方聊天 API；开启后可单独指定便宜模型给 AI 深检使用。
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setLocalWorldbookDedupeEnabled(v => !v)}
-                            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${localWorldbookDedupeEnabled ? 'bg-emerald-500' : 'bg-slate-200'}`}
-                            aria-pressed={localWorldbookDedupeEnabled}
-                        >
-                            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${localWorldbookDedupeEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                        </button>
-                    </div>
-
-                    {localWorldbookDedupeEnabled && (
-                        <div className="space-y-3 animate-slide-down">
-                            {apiPresets.length > 0 && (
-                                <div>
-                                    <label className="text-[10px] font-bold text-emerald-700/70 uppercase tracking-widest mb-1.5 block pl-1">选择预设</label>
-                                    <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                                        {apiPresets.map(preset => (
-                                            <button
-                                                key={preset.id}
-                                                type="button"
-                                                onClick={() => loadWorldbookDedupePreset(preset)}
-                                                className="shrink-0 rounded-full border border-emerald-100 bg-white/80 px-3 py-1.5 text-[11px] font-bold text-emerald-700 active:scale-95 transition-transform"
-                                            >
-                                                {preset.name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="grid gap-3">
-                                <div>
-                                    <label className="text-[10px] font-bold text-emerald-700/70 uppercase tracking-widest mb-1.5 block pl-1">去重 URL</label>
-                                    <input
-                                        type="text"
-                                        value={localWorldbookDedupeUrl}
-                                        onChange={(e) => setLocalWorldbookDedupeUrl(e.target.value)}
-                                        placeholder={localUrl || '留空则跟随主 URL'}
-                                        className="w-full bg-white/70 border border-emerald-100 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-emerald-700/70 uppercase tracking-widest mb-1.5 block pl-1">去重 Key</label>
-                                    <input
-                                        type="password"
-                                        value={localWorldbookDedupeKey}
-                                        onChange={(e) => setLocalWorldbookDedupeKey(e.target.value)}
-                                        placeholder={localKey ? '留空则跟随主 Key' : 'sk-...'}
-                                        className="w-full bg-white/70 border border-emerald-100 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-emerald-700/70 uppercase tracking-widest mb-1.5 block pl-1">去重 Model</label>
-                                    <input
-                                        type="text"
-                                        value={localWorldbookDedupeModel}
-                                        onChange={(e) => setLocalWorldbookDedupeModel(e.target.value)}
-                                        placeholder={localModel || '留空则跟随主 Model'}
-                                        className="w-full bg-white/70 border border-emerald-100 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-                
                 <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
                     {statusMsg || '保存配置'}
                 </button>
