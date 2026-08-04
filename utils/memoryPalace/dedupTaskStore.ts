@@ -31,6 +31,8 @@ export interface DedupTaskState {
     startedAt: number;
     updatedAt: number;
     finishedAt?: number;
+    /** 用户点了完成 toast，请求打开记忆宫殿并跳到去重结果；由组件消费后清掉 */
+    focusRequestAt?: number;
 }
 
 const STORAGE_KEY = 'sullyos.memoryPalace.dedupTask.v1';
@@ -112,6 +114,12 @@ export const dedupTaskStore = {
             startedAt: Date.now(),
             updatedAt: Date.now(),
         };
+        emit();
+        persist();
+    },
+    /** 请求把用户带回记忆宫殿去重结果（配合可点击的完成 toast） */
+    requestFocus: () => {
+        state = { ...state, focusRequestAt: Date.now(), updatedAt: Date.now() };
         emit();
         persist();
     },

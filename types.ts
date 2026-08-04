@@ -2520,6 +2520,7 @@ export interface Toast {
     id: string;
     message: string;
     type: 'success' | 'error' | 'info';
+    onClick?: () => void;
 }
 
 export interface XhsStockImage {
