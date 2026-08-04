@@ -67,4 +67,35 @@ describe('ChatPrompts built-in prompt switches', () => {
         expect(text).not.toContain('HTML 卡片');
         expect(text).not.toContain('邀请函');
     });
+
+    it('injects music atmosphere by default when the user is listening to music', async () => {
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            baseChar, userProfile, [], [], [], history,
+            undefined, undefined,
+            { songName: '夜曲', artists: '周杰伦', lyricWindow: [], activeIdx: -1 },
+            false,
+        );
+        const combined = parts.stable + parts.volatileState + parts.recencyTail;
+
+        expect(combined).toContain('此刻的对话氛围');
+        expect(combined).toContain('夜曲');
+    });
+
+    it('omits music atmosphere when the music switch is off', async () => {
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            {
+                ...baseChar,
+                builtInPromptSettings: { musicAtmosphere: false },
+            },
+            userProfile, [], [], [], history,
+            undefined, undefined,
+            { songName: '夜曲', artists: '周杰伦', lyricWindow: [], activeIdx: -1 },
+            false,
+        );
+        const combined = parts.stable + parts.volatileState + parts.recencyTail;
+
+        expect(combined).not.toContain('此刻的对话氛围');
+        expect(combined).not.toContain('夜曲');
+        expect(combined).toContain('你是小角色。保留这段核心人设。');
+    });
 });

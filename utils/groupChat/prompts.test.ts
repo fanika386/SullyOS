@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildGroupHistoryBlock, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
+import { buildGroupHistoryBlock, buildMemberPrivateStateBlock, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
 import type { Message, CharacterProfile } from '../../types';
 
 const char = (id: string, name: string): CharacterProfile => ({ id, name } as CharacterProfile);
@@ -37,5 +37,22 @@ describe('buildGroupHistoryBlock 时间跳变分隔行', () => {
 
     it('阈值常量为 3 小时', () => {
         expect(GROUP_HISTORY_GAP_THRESHOLD_MS).toBe(3 * 60 * 60 * 1000);
+    });
+});
+
+describe('buildMemberPrivateStateBlock 跟随角色开关', () => {
+    const timeline = '[私聊][07-10 22:14] 用户: 今天好累……';
+
+    it('默认（线上聊天）角色保留私聊状态块', () => {
+        const block = buildMemberPrivateStateBlock(char('c1', '小夏'), '刚刚', timeline);
+        expect(block).toContain('重点：私聊状态');
+        expect(block).toContain(timeline);
+    });
+
+    it('chatStyle 关闭（非线上聊天 / 角色扮演）时不注入私聊状态块', () => {
+        const rpChar = char('c1', '小夏') as CharacterProfile & { builtInPromptSettings?: unknown };
+        rpChar.builtInPromptSettings = { chatStyle: false };
+        const block = buildMemberPrivateStateBlock(rpChar, '刚刚', timeline);
+        expect(block).toBe('');
     });
 });

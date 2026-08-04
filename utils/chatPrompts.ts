@@ -19,6 +19,7 @@ import { getLocalDateKey } from './localDate';
 import { getLocalDailySchedule } from './dailySchedule';
 import {
     isBuiltInPromptEnabled,
+    shouldInjectMusicAtmosphere,
     shouldInjectScheduleAndEmotion,
     shouldInjectTimeAwareness,
     shouldInjectUtilityPrompts,
@@ -515,44 +516,48 @@ ${groupLogStr}\n`;
         // 2b. 音乐氛围（复用同一份 schedule）
         //     - 同步：从 schedule 里算 char 当前"正在听"哪首歌
         //     - 异步（可选）：拉一段歌词片段让这首歌真能影响 char 心境
-        try {
-            let charListening: {
-                songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
-            } | null = null;
+        // 跟随 builtInPromptSettings.musicAtmosphere：角色扮演关掉后，连歌词副 API
+        // 都不调用，也不会注入"对方在听歌 / 一起听"任何提示词。
+        if (shouldInjectMusicAtmosphere(char)) {
             try {
-                const cur = computeCurrentListening(char, schedule);
-                if (cur) {
-                    charListening = { songId: cur.songId, songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
-                    // 拉歌词。优先用调用方传进来的 cfg；没传就从 localStorage 取
-                    // —— Proactive / activeMsgClient 走这条路也能享受到歌词。
-                    const cfgForLyric = musicCfg?.workerUrl ? musicCfg : loadMusicCfgStandalone();
-                    if (cfgForLyric?.workerUrl) {
-                        try {
-                            const slot = getCurrentSlot(schedule);
-                            const seed = `${char.id}-${today}-${slot?.startTime || '00:00'}-${cur.songId}`;
-                            const snippet = await getCharLyricSnippet(cfgForLyric, cur.songId, seed, 6);
-                            if (snippet.length > 0) charListening.lyricSnippet = snippet;
-                        } catch { /* 歌词失败不拦住主 prompt */ }
+                let charListening: {
+                    songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
+                } | null = null;
+                try {
+                    const cur = computeCurrentListening(char, schedule);
+                    if (cur) {
+                        charListening = { songId: cur.songId, songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
+                        // 拉歌词。优先用调用方传进来的 cfg；没传就从 localStorage 取
+                        // —— Proactive / activeMsgClient 走这条路也能享受到歌词。
+                        const cfgForLyric = musicCfg?.workerUrl ? musicCfg : loadMusicCfgStandalone();
+                        if (cfgForLyric?.workerUrl) {
+                            try {
+                                const slot = getCurrentSlot(schedule);
+                                const seed = `${char.id}-${today}-${slot?.startTime || '00:00'}-${cur.songId}`;
+                                const snippet = await getCharLyricSnippet(cfgForLyric, cur.songId, seed, 6);
+                                if (snippet.length > 0) charListening.lyricSnippet = snippet;
+                            } catch { /* 歌词失败不拦住主 prompt */ }
+                        }
+                    }
+                } catch { /* 静默失败，不影响主 prompt */ }
+
+                const musicBlock = ContextBuilder.buildMusicAtmosphere(
+                    char,
+                    userProfile.name,
+                    userListeningContext || null,
+                    charListening,
+                    isListeningTogether,
+                    recentTrackSwitch,
+                );
+                if (musicBlock) {
+                    volatileState += `\n${musicBlock}\n`;
+                    if (userListeningContext) {
+                        volatileState += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                     }
                 }
-            } catch { /* 静默失败，不影响主 prompt */ }
-
-            const musicBlock = ContextBuilder.buildMusicAtmosphere(
-                char,
-                userProfile.name,
-                userListeningContext || null,
-                charListening,
-                isListeningTogether,
-                recentTrackSwitch,
-            );
-            if (musicBlock) {
-                volatileState += `\n${musicBlock}\n`;
-                if (userListeningContext) {
-                    volatileState += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
-                }
+            } catch (e) {
+                console.error('Failed to inject music atmosphere:', e);
             }
-        } catch (e) {
-            console.error('Failed to inject music atmosphere:', e);
         }
 
         // 群聊背景带时间戳、随群消息实时滚动 → 易变；日记标题/生活记录变化很慢 → 稳定。

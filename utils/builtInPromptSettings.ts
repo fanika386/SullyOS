@@ -9,6 +9,7 @@ export const BUILT_IN_PROMPT_SETTING_KEYS: BuiltInPromptSettingKey[] = [
     'antiFiller',
     'timeAwareness',
     'scheduleAndEmotion',
+    'musicAtmosphere',
     'utilityPrompts',
     'recencyTail',
     'historyEventContext',
@@ -21,6 +22,7 @@ export const DEFAULT_BUILT_IN_PROMPT_SETTINGS: Required<BuiltInPromptSettings> =
     antiFiller: true,
     timeAwareness: true,
     scheduleAndEmotion: true,
+    musicAtmosphere: true,
     utilityPrompts: true,
     recencyTail: true,
     historyEventContext: true,
@@ -38,6 +40,7 @@ export const ROLEPLAY_BUILT_IN_PROMPT_PRESET: Required<BuiltInPromptSettings> = 
     antiFiller: false,
     timeAwareness: false,
     scheduleAndEmotion: false,
+    musicAtmosphere: false,
     utilityPrompts: false,
     recencyTail: false,
     historyEventContext: false,
@@ -77,6 +80,11 @@ export const BUILT_IN_PROMPT_SETTING_DEFINITIONS: Array<{
         key: 'scheduleAndEmotion',
         label: '日程 / 情绪 Buff',
         description: '日程状态、情绪底色、后台情绪评估和下一轮 innerState。',
+    },
+    {
+        key: 'musicAtmosphere',
+        label: '音乐氛围 / 对方在听歌',
+        description: '对方正在听的歌、一起听、歌词与音乐互动工具。可以不关：只要没在听歌、没打开音乐软件，就不会注入任何音乐提示词；角色扮演建议别听歌，或直接关掉。',
     },
     {
         key: 'utilityPrompts',
@@ -121,6 +129,12 @@ export function shouldInjectScheduleAndEmotion(
     char: Pick<CharacterProfile, 'builtInPromptSettings'> | null | undefined,
 ): boolean {
     return isBuiltInPromptEnabled(char as any, 'scheduleAndEmotion');
+}
+
+export function shouldInjectMusicAtmosphere(
+    char: Pick<CharacterProfile, 'builtInPromptSettings'> | null | undefined,
+): boolean {
+    return isBuiltInPromptEnabled(char as any, 'musicAtmosphere');
 }
 
 export function shouldInjectUtilityPrompts(

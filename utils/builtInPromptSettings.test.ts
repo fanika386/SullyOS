@@ -20,5 +20,7 @@ describe('built-in prompt settings', () => {
         expect(ROLEPLAY_BUILT_IN_PROMPT_PRESET.scheduleAndEmotion).toBe(false);
         expect(ROLEPLAY_BUILT_IN_PROMPT_PRESET.utilityPrompts).toBe(false);
         expect(ROLEPLAY_BUILT_IN_PROMPT_PRESET.recencyTail).toBe(false);
+        expect(ROLEPLAY_BUILT_IN_PROMPT_PRESET.musicAtmosphere).toBe(false);
+        expect(ROLEPLAY_BUILT_IN_PROMPT_PRESET.historyEventContext).toBe(false);
     });
 });

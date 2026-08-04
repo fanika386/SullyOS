@@ -406,6 +406,8 @@ export interface BuiltInPromptSettings {
   timeAwareness?: boolean;
   /** 日程 / 情绪 Buff：日程注入、情绪底色、后台情绪评估与 innerState。 */
   scheduleAndEmotion?: boolean;
+  /** 音乐氛围：对方正在听的歌、一起听、歌词与音乐互动工具；没有音乐播放时不会注入。 */
+  musicAtmosphere?: boolean;
   /** 额外功能提示词：HTML、心象、语音、XHS、Notion/飞书、搜索、点单、MCP 等。 */
   utilityPrompts?: boolean;
   /** 末尾钢印：「关于对方的表达」与「回到你自己」。 */

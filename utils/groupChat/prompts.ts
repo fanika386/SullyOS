@@ -1,6 +1,7 @@
 // 群聊提示词构建 —— 从 GroupChat.tsx 抽出的纯函数，导演模式模板"搬家不改字"，
 // 供导演模式与轮询模式（每成员一次调用）共用。
 import { Message, CharacterProfile, EmojiCategory } from '../../types';
+import { isBuiltInPromptEnabled } from '../builtInPromptSettings';
 import { stickerNameFromUrl } from '../messageFormat';
 import { packetHistoryLine } from './redpacket';
 
@@ -244,4 +245,27 @@ ${history.attachedImagesNote}
 7. 角色之间可以互相接话、起哄，不必每句都对着用户说；也允许你只回应群里另一位成员刚说的话。
 8. 引用回复（可选）：想针对记录里某条具体发言回复时，在你的内容开头加 \`[[QUOTE: 原话片段]]\`（片段取原话开头几个字即可）。偶尔用，别每条都引用。
 9. 红包（可选）：记录里有「拼手气红包…还剩 n 份可抢」且你想抢时，单独一行输出 \`[[GRAB_PACKET]]\` 并配一句真实反应；看到发给自己的专属红包，用 \`[[GRAB_PACKET]]\` 收下或 \`[[RETURN_PACKET]]\` 退回并说明原因。你也可以主动发：拼手气 \`[[SEND_PACKET: lucky:总额:份数:祝福语]]\`，专属 \`[[SEND_PACKET: direct:对方名字:金额:祝福语]]\`。抢不抢由你的性格决定，金额别离谱。`;
+}
+
+/**
+ * 群聊成员块的「私聊状态」内置提示词（空窗期 + 互动时间线 + 群聊表现指南）。
+ * 跟随角色自己的 chatStyle 开关：该开关关闭 = 角色不处于"线上聊天"模式（角色扮演），
+ * 就不注入这段群聊特有的内置系统提示词，避免群聊另起一套把角色拉回线上聊天框架。
+ * 返回空串时调用方不要拼这段。
+ */
+export function buildMemberPrivateStateBlock(
+    member: CharacterProfile,
+    privateGapInfo: string,
+    memberTimeline: string,
+): string {
+    if (!isBuiltInPromptEnabled(member, 'chatStyle')) return '';
+    return `[重点：私聊状态 (Private Context)]:
+- **私聊空窗期**: ${privateGapInfo}
+- **重要指令**: 如果 [私聊空窗期] 显示 "刚刚" 或 "几小时前"，请【忽略】群聊的时间流逝感知。哪怕群里很久没说话，只要你和用户私底下刚聊过，就【严禁】说 "好久不见" 或表现出疏离感。
+- 你的近期互动时间线（按时间排序；[私聊]=你和用户单独聊的，别人看不见；[群聊]=本群公开记录。仅作为你内心状态的底色，不要变成默认反应模板）：
+${memberTimeline || '(暂无互动记录)'}
+- **关于私聊状态如何影响群聊表现**：
+  · 私聊在吵架 → **可能**有点别扭/冷淡/借题发挥，但**强度由你的性格决定**。情绪稳定的人不会因为私下闹矛盾就在群里失态；脾气大的人才会带情绪到群里。绝大多数情况是"心里有点疙瘩"而不是"摆脸色给所有人看"。
+  · 私聊在甜蜜 → **可能**有点想低调、不好意思声张，或者反而想隐隐显摆一下，看你性格。**不必每次都"支支吾吾"**——这是套路化反应，不真实。
+  · 关键原则：你是一个完整的人，不是"私聊状态的应激反应器"。你在群里此刻什么状态，更多取决于你**这个人本身**和**群里此刻在聊什么**，私聊只是底色之一。`;
 }
