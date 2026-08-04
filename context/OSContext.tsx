@@ -331,7 +331,7 @@ interface OSContextType {
   importAppearancePreset: (file: File) => Promise<void>;
 
   toasts: Toast[];
-  addToast: (message: string, type?: Toast['type']) => void;
+  addToast: (message: string, type?: Toast['type'], duration?: number) => void;
 
   // 长报错弹窗：toast 一行装不下 / 手机没法开 console 时, 用 showError 弹一个
   // 多行预览框 + 复制按钮, 方便用户把原文反馈过来。
@@ -2935,7 +2935,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (stored) await DB.saveAsset(`icon_${appId}`, stored);
       else await DB.deleteAsset(`icon_${appId}`);
   };
-  const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  const addToast = (message: string, type: Toast['type'] = 'info', duration = 3000) => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, duration); };
   const showError = (title: string, details: string) => { setErrorDialog({ title, details }); };
   const dismissError = () => { setErrorDialog(null); };
 

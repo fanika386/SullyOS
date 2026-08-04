@@ -802,6 +802,9 @@ export async function scanAiSemanticDuplicateMemories(
     let completed = 0;
 
     for (const [charId, charNodes] of charBatches) {
+        const charName = options.charNameById?.[charId] || charId;
+        const batchPart = charBatches.length > 1 ? `（第 ${completed + 1}/${charBatches.length} 批）` : '';
+        options.onStep?.(`AI 正在分析「${charName}」的 ${charNodes.length} 条记忆${batchPart}…`);
         const raw = await requestAiDuplicateSuggestions(
             charId,
             options.charNameById?.[charId] || charId,

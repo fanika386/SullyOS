@@ -571,13 +571,22 @@ export default function MemoryPalaceApp() {
     const [displayDedupProgress, setDisplayDedupProgress] = useState<{ done: number; total: number; label: string; step?: string } | null>(null);
     const dedupBaseRef = React.useRef<{ done: number; total: number; label: string; step?: string } | null>(null);
     const dedupActiveRef = React.useRef(false);
-    const dedupStepQueueRef = React.useRef<string[]>([]);
+    const dedupStepQueueRef = React.useRef<Array<{ step: string; at: number }>>([]);
     const dedupStepTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const dedupHideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const dedupWaitTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
     const dedupStartedAtRef = React.useRef(0);
     const displayedStepRef = React.useRef<string | null>(null);
 
+    const clearDedupWaitTimer = () => {
+        if (dedupWaitTimerRef.current) {
+            clearInterval(dedupWaitTimerRef.current);
+            dedupWaitTimerRef.current = null;
+        }
+    };
+
     const clearDedupTimers = () => {
+        clearDedupWaitTimer();
         if (dedupStepTimerRef.current) {
             clearTimeout(dedupStepTimerRef.current);
             dedupStepTimerRef.current = null;
@@ -588,10 +597,22 @@ export default function MemoryPalaceApp() {
         }
     };
 
+    /** AI 等模型回复可能很久：给当前步骤加上“已等待 N 秒”，让用户知道还在干活 */
+    const startDedupWaitTimer = (baseStep: string, shownAt: number) => {
+        clearDedupWaitTimer();
+        if (!dedupActiveRef.current || !baseStep) return;
+        dedupWaitTimerRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - shownAt) / 1000);
+            if (elapsed <= 0) return;
+            setDisplayDedupProgress(prev => prev ? { ...prev, step: `${baseStep}（已等待 ${elapsed} 秒）` } : prev);
+        }, 1000);
+    };
+
     const scheduleDedupHide = () => {
         if (dedupHideTimerRef.current) return;
         dedupHideTimerRef.current = setTimeout(() => {
             dedupHideTimerRef.current = null;
+            clearDedupWaitTimer();
             dedupBaseRef.current = null;
             dedupActiveRef.current = false;
             displayedStepRef.current = null;
@@ -603,10 +624,11 @@ export default function MemoryPalaceApp() {
         if (dedupStepTimerRef.current || dedupStepQueueRef.current.length === 0) return;
         dedupStepTimerRef.current = setTimeout(() => {
             dedupStepTimerRef.current = null;
-            const step = dedupStepQueueRef.current.shift();
-            if (step && dedupBaseRef.current) {
-                displayedStepRef.current = step;
-                setDisplayDedupProgress({ ...dedupBaseRef.current, step });
+            const item = dedupStepQueueRef.current.shift();
+            if (item && dedupBaseRef.current) {
+                displayedStepRef.current = item.step;
+                setDisplayDedupProgress({ ...dedupBaseRef.current, step: item.step });
+                startDedupWaitTimer(item.step, item.at);
             }
             if (dedupStepQueueRef.current.length > 0) {
                 startDedupStepTicker();
@@ -631,21 +653,23 @@ export default function MemoryPalaceApp() {
             }
             dedupBaseRef.current = p;
             dedupActiveRef.current = true;
-            if (p.step && p.step !== displayedStepRef.current && p.step !== dedupStepQueueRef.current[dedupStepQueueRef.current.length - 1]) {
+            if (p.step && p.step !== displayedStepRef.current && p.step !== dedupStepQueueRef.current[dedupStepQueueRef.current.length - 1]?.step) {
                 if (dedupStepQueueRef.current.length >= DEDUP_MAX_QUEUED_STEPS) {
-                    dedupStepQueueRef.current[dedupStepQueueRef.current.length - 1] = p.step;
+                    dedupStepQueueRef.current[dedupStepQueueRef.current.length - 1] = { step: p.step, at: dedupTask.updatedAt };
                 } else {
-                    dedupStepQueueRef.current.push(p.step);
+                    dedupStepQueueRef.current.push({ step: p.step, at: dedupTask.updatedAt });
                 }
             }
             if (!displayedStepRef.current) {
                 // 第一帧立即显示，不等 0.3 秒
                 displayedStepRef.current = p.step || '';
                 setDisplayDedupProgress(p);
+                startDedupWaitTimer(p.step || '', dedupTask.updatedAt);
             }
             startDedupStepTicker();
         } else {
             // 任务结束：不再收新步骤，等队列里的阶段播完再收起
+            clearDedupWaitTimer();
             dedupActiveRef.current = false;
             if (dedupStepQueueRef.current.length === 0) {
                 scheduleDedupHide();
@@ -1952,7 +1976,7 @@ export default function MemoryPalaceApp() {
                 }
 
                 const charNameById = Object.fromEntries(characters.map(c => [c.id, c.name]));
-                addToast(`${scanScope.ownerName} 的 AI 记忆去重开始了，可以先去做别的`, 'info');
+                addToast(`${scanScope.ownerName} 的 AI 记忆去重开始了，可以先去做别的`, 'info', 8000);
                 const preview = await scanAiSemanticDuplicateMemories({
                     charIds: scanCharIds,
                     llmConfig: aiConfig.config,
@@ -1977,7 +2001,7 @@ export default function MemoryPalaceApp() {
                         result: `[ok]${scopeLabel} · ${modeLabel}：用 ${aiConfig.label} 扫描 ${preview.scannedCount} 条记忆，调用 ${preview.aiCallCount || 0} 次，没有发现可合并的语义重复项`,
                         finishedAt: Date.now(),
                     });
-                    addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成`, 'success');
+                    addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成`, 'success', 8000);
                     return;
                 }
 
@@ -1989,7 +2013,7 @@ export default function MemoryPalaceApp() {
                     finishedAt: Date.now(),
                 });
                 setDedupSelectedDeleteIds(new Set());
-                addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，找到 ${preview.duplicateCount} 条候选`, 'success');
+                addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，找到 ${preview.duplicateCount} 条候选`, 'success', 8000);
                 return;
             }
 
@@ -2026,7 +2050,7 @@ export default function MemoryPalaceApp() {
                     result: `[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆${vectorPart}，没有发现重复项`,
                     finishedAt: Date.now(),
                 });
-                addToast(`${scanScope.ownerName} 的记忆去重扫描完成，没有发现重复`, 'success');
+                addToast(`${scanScope.ownerName} 的记忆去重扫描完成，没有发现重复`, 'success', 8000);
                 return;
             }
 
@@ -2042,7 +2066,7 @@ export default function MemoryPalaceApp() {
                 result: `[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆，覆盖 ${preview.charCount} 个角色，找到 ${preview.groups.length} 组重复、${preview.duplicateCount} 条建议删除项${semanticHint}。候选已默认全选，确认下面的内容后再删除。`,
                 finishedAt: Date.now(),
             });
-            addToast(`${scanScope.ownerName} 的记忆去重扫描完成，找到 ${preview.duplicateCount} 条重复，回来看结果确认`, 'success');
+            addToast(`${scanScope.ownerName} 的记忆去重扫描完成，找到 ${preview.duplicateCount} 条重复，回来看结果确认`, 'success', 8000);
         } catch (e: any) {
             dedupTaskStore.set({ status: 'error', progress: null, result: `[err]去重失败：${e?.message || e}`, finishedAt: Date.now() });
         }
@@ -2103,7 +2127,7 @@ export default function MemoryPalaceApp() {
                 result: `${result.failed.length > 0 ? '[warn]' : '[ok]'}${modeLabel}：删除 ${result.deleted}/${result.duplicateCount} 条已确认重复记忆${remotePart}${failPart}`,
                 finishedAt: Date.now(),
             });
-            addToast(`${ownerName} 的记忆去重完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success');
+            addToast(`${ownerName} 的记忆去重完成，删除 ${result.deleted} 条`, result.failed.length > 0 ? 'info' : 'success', 8000);
             setDedupSelectedDeleteIds(new Set());
             await loadStats();
         } catch (e: any) {
@@ -5092,6 +5116,41 @@ create table if not exists memory_vectors (
                             <span>查看事件盒</span>
                         </div>
                     </div>
+
+                    {/* 去重任务结果提示条：退出页面后回来也能一眼看到 */}
+                    {dedupTask.status !== 'idle' && dedupTask.status !== 'running' && (
+                        <div style={{
+                            marginTop: 12, padding: '10px 12px', borderRadius: 12,
+                            display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, lineHeight: 1.5,
+                            background: dedupTask.status === 'error' || dedupTask.status === 'interrupted' ? '#fef2f2' : dedupTask.status === 'review' ? '#fffbeb' : '#f0fdf4',
+                            border: dedupTask.status === 'error' || dedupTask.status === 'interrupted' ? '1px solid #fecaca' : dedupTask.status === 'review' ? '1px solid #fde68a' : '1px solid #bbf7d0',
+                        }}>
+                            <span style={{ flexShrink: 0 }}>
+                                {dedupTask.status === 'error' || dedupTask.status === 'interrupted' ? '⚠️' : dedupTask.status === 'review' ? '🔔' : '✅'}
+                            </span>
+                            <span style={{
+                                flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                color: dedupTask.status === 'error' || dedupTask.status === 'interrupted' ? '#991b1b' : dedupTask.status === 'review' ? '#92400e' : '#166534',
+                            }}>
+                                {dedupTask.result ?? '上次去重任务有结果，点这里查看'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setView('settings');
+                                    setTimeout(() => document.getElementById('memory-dedup-tool')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                                }}
+                                style={{
+                                    flexShrink: 0, padding: '5px 10px', borderRadius: 8,
+                                    border: '1px solid currentColor', background: 'transparent',
+                                    color: dedupTask.status === 'error' || dedupTask.status === 'interrupted' ? '#b91c1c' : dedupTask.status === 'review' ? '#b45309' : '#15803d',
+                                    fontWeight: 700, cursor: 'pointer', fontSize: 11,
+                                }}
+                            >
+                                查看
+                            </button>
+                        </div>
+                    )}
 
                     {/* 全局搜索 */}
                     <div style={{ marginTop: 12, textAlign: 'left', position: 'relative' }}>
