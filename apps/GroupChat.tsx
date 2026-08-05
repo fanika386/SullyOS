@@ -40,7 +40,7 @@ import {
     makeGroupTopicBox,
     planGroupTopicBatch,
 } from '../utils/groupChat/topicBoxes';
-import { isNearBottom, shouldAutoScrollToBottom, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
+import { isNearBottom, shouldAutoScrollToBottom, shouldFreezeDisplayWindow, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -374,6 +374,7 @@ const GroupChat: React.FC = () => {
     const MESSAGE_PAGE_SIZE = 50;
     const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE_SIZE);
     const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+    const [frozenDisplay, setFrozenDisplay] = useState<Message[] | null>(null);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [mcpStatus, setMcpStatus] = useState('');
@@ -460,6 +461,7 @@ const GroupChat: React.FC = () => {
         if (activeGroup) {
             stickToBottomRef.current = true;
             setShowJumpToLatest(false);
+            setFrozenDisplay(null);
             setVisibleCount(MESSAGE_PAGE_SIZE);
             DB.getRecentGroupMessagesWithCount(activeGroup.id, MESSAGE_PAGE_SIZE).then(({ messages: msgs, totalCount }) => {
                 setMessages(msgs);
@@ -498,6 +500,15 @@ const GroupChat: React.FC = () => {
         const el = scrollRef.current;
         if (!el) return;
         stickToBottomRef.current = isNearBottom(el);
+        const freeze = shouldFreezeDisplayWindow({
+            stickToBottom: stickToBottomRef.current,
+            blocked: selectionMode,
+        });
+        if (freeze) {
+            setFrozenDisplay(prev => prev ?? displayMessages);
+        } else {
+            setFrozenDisplay(null);
+        }
         setShowJumpToLatest(prev => {
             const next = shouldShowJumpToLatest({
                 stickToBottom: stickToBottomRef.current,
@@ -532,7 +543,7 @@ const GroupChat: React.FC = () => {
         sync.maxId = sync.maxId == null ? lastId : Math.max(sync.maxId, lastId);
     }, [messages, activeGroup?.id, activeGroup?.chromeCustomCss, activeGroup?.chatSound, osTheme.chatChromeCustomCss, osTheme.chatSound]);
 
-    const displayMessages = useMemo(() => messages.slice(-visibleCount), [messages, visibleCount]);
+    const displayMessages = useMemo(() => frozenDisplay || messages.slice(-visibleCount), [messages, visibleCount, frozenDisplay]);
     const collapsedCount = Math.max(0, totalMsgCount - messages.length);
 
     const canReroll = useMemo(() => {
@@ -618,6 +629,7 @@ const GroupChat: React.FC = () => {
         if (!selectedMessage) return;
         await DB.deleteMessage(selectedMessage.id);
         setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
+        setFrozenDisplay(null);
         setModalType('none');
         setSelectedMessage(null);
         addToast('消息已删除', 'success');
@@ -633,6 +645,7 @@ const GroupChat: React.FC = () => {
         if (!selectedMessage) return;
         await DB.updateMessage(selectedMessage.id, editContent);
         setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+        setFrozenDisplay(null);
         setModalType('none');
         setSelectedMessage(null);
         addToast('消息已修改', 'success');
@@ -651,6 +664,7 @@ const GroupChat: React.FC = () => {
         if (selectedMsgIds.size === 0) return;
         await DB.deleteMessages(Array.from(selectedMsgIds));
         setMessages(prev => prev.filter(m => !selectedMsgIds.has(m.id)));
+        setFrozenDisplay(null);
         setSelectionMode(false);
         setSelectedMsgIds(new Set());
         addToast(`已删除 ${selectedMsgIds.size} 条消息`, 'success');
@@ -1595,6 +1609,9 @@ ${privateStateBlock ? `\n${privateStateBlock}\n` : ''}
                             const { messages: moreMsgs, totalCount } = await DB.getRecentGroupMessagesWithCount(activeGroup.id, nextVisibleCount);
                             setMessages(moreMsgs);
                             setTotalMsgCount(totalCount);
+                            if (frozenDisplay) {
+                                setFrozenDisplay(moreMsgs.slice(-nextVisibleCount));
+                            }
                         }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">
                             加载历史消息 ({collapsedCount})
                         </button>
@@ -1641,6 +1658,7 @@ ${privateStateBlock ? `\n${privateStateBlock}\n` : ''}
                                 el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
                                 stickToBottomRef.current = true;
                                 setShowJumpToLatest(false);
+                                setFrozenDisplay(null);
                             }}
                             className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5"
                         >

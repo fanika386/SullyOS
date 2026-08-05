@@ -51,7 +51,7 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
-import { isNearBottom, resolveAutoScrollAction, shouldAutoScrollToBottom, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
+import { isNearBottom, resolveAutoScrollAction, shouldAutoScrollToBottom, shouldFreezeDisplayWindow, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -84,6 +84,7 @@ const Chat: React.FC = () => {
     const [windowedFocusMsgId, setWindowedFocusMsgId] = useState<number | null>(null);
     const [flashMsgId, setFlashMsgId] = useState<number | null>(null);
     const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+    const [frozenDisplay, setFrozenDisplay] = useState<Message[] | null>(null);
     // 角色切换/进入时的缓入开关：先 false（透明），下一帧转 true，靠 CSS transition 平滑淡入。
     // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
@@ -618,15 +619,15 @@ const Chat: React.FC = () => {
     // How many messages to load per batch (initial load + each "load more" click)
     const LOAD_BATCH_SIZE = 30;
 
-    const reloadMessages = useCallback(async (requestedVisibleCount: number) => {
-        if (!activeCharacterId) return;
+    const reloadMessages = useCallback(async (requestedVisibleCount: number): Promise<Message[] | undefined> => {
+        if (!activeCharacterId) return undefined;
 
         const charIdAtStart = activeCharacterId;
         // 只用倒序游标取「最近 N 条」（含少量缓冲，抵消 date/call/系统消息被过滤后条数变少），
         // 不再 getAll 全量反序列化 —— 图片多/消息多的账号原本要把整段历史（含内联图片）一次性读进
         // 内存才显示 30 条，首次打开会卡好几秒。totalCount 走 index.count，不反序列化、极廉价。
         const fetchLimit = requestedVisibleCount >= 100000 ? requestedVisibleCount : requestedVisibleCount + 16;
-        const applyResult = (recent: Message[], totalCount: number) => {
+        const applyResult = (recent: Message[], totalCount: number): Message[] => {
             // 用 ref 取当前 char（避免闭包过期）
             const currentChar = charRef.current;
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
@@ -639,25 +640,27 @@ const Chat: React.FC = () => {
             // 有计数、点击却加载不出任何东西的幽灵按钮。倒序游标没取满 fetchLimit 条
             // 即说明该角色的单聊消息已全部在手，此时把总数钳到实际可展示的条数。
             const exhausted = recent.length < fetchLimit;
+            const windowMsgs = chatScopeMsgs.slice(-requestedVisibleCount);
             setTotalMsgCount(exhausted ? chatScopeMsgs.length : totalCount);
-            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+            setMessages(windowMsgs);
+            return windowMsgs;
         };
         try {
             const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit);
             // Guard against stale async results: if the user switched characters
             // while the DB query was in flight, discard this result.
-            if (activeCharIdRef.current !== charIdAtStart) return;
-            applyResult(recent, totalCount);
+            if (activeCharIdRef.current !== charIdAtStart) return undefined;
+            return applyResult(recent, totalCount);
         } catch (e) {
             // DB read failed — retry once after a short delay
-            if (activeCharIdRef.current !== charIdAtStart) return;
+            if (activeCharIdRef.current !== charIdAtStart) return undefined;
             await new Promise(r => setTimeout(r, 200));
-            if (activeCharIdRef.current !== charIdAtStart) return;
+            if (activeCharIdRef.current !== charIdAtStart) return undefined;
             try {
                 const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit);
-                if (activeCharIdRef.current !== charIdAtStart) return;
-                applyResult(recent, totalCount);
-            } catch { /* give up silently */ }
+                if (activeCharIdRef.current !== charIdAtStart) return undefined;
+                return applyResult(recent, totalCount);
+            } catch { return undefined; /* give up silently */ }
         }
     }, [activeCharacterId]);
 
@@ -712,6 +715,7 @@ const Chat: React.FC = () => {
             setFlashMsgId(null);
             stickToBottomRef.current = true;
             setShowJumpToLatest(false);
+            setFrozenDisplay(null);
             try {
                 const rawToolStatus = localStorage.getItem(`instant_tool_status_${activeCharacterId}`);
                 const parsed = rawToolStatus ? JSON.parse(rawToolStatus) as InstantToolUiStatus : null;
@@ -883,6 +887,15 @@ const Chat: React.FC = () => {
         const el = scrollRef.current;
         if (!el) return;
         stickToBottomRef.current = isNearBottom(el);
+        const freeze = shouldFreezeDisplayWindow({
+            stickToBottom: stickToBottomRef.current,
+            blocked: selectionMode || windowedFocusMsgId !== null,
+        });
+        if (freeze) {
+            setFrozenDisplay(prev => prev ?? displayMessages);
+        } else {
+            setFrozenDisplay(null);
+        }
         setShowJumpToLatest(prev => {
             const next = shouldShowJumpToLatest({
                 stickToBottom: stickToBottomRef.current,
@@ -944,6 +957,7 @@ const Chat: React.FC = () => {
         }
         stickToBottomRef.current = true;
         setShowJumpToLatest(false);
+        setFrozenDisplay(null);
 
         // 用户手打"麦请求"三个字 → 等价于点击麦克风按钮 (拉起麦当劳菜单)
         // 不落库, 跟按钮点击行为完全一致, 避免出现"banner 在但菜单没拉起"的诡异状态
@@ -2067,6 +2081,7 @@ const Chat: React.FC = () => {
         const LARGE = 999999;
         visibleCountRef.current = LARGE;
         setVisibleCount(LARGE);
+        setFrozenDisplay(null);
         await reloadMessages(LARGE);
         setWindowedFocusMsgId(messageId);
         setFlashMsgId(messageId);
@@ -2083,6 +2098,7 @@ const Chat: React.FC = () => {
         setFlashMsgId(null);
         stickToBottomRef.current = true;
         setShowJumpToLatest(false);
+        setFrozenDisplay(null);
         visibleCountRef.current = 30;
         setVisibleCount(30);
         await reloadMessages(30);
@@ -2405,6 +2421,7 @@ const Chat: React.FC = () => {
         setSelectionMode(false);
         setSelectedMsgIds(new Set());
         setSelectedThinkingMsgIds(new Set());
+        setFrozenDisplay(null);
     };
 
     // --- Forward Chat Records ---
@@ -2470,6 +2487,7 @@ const Chat: React.FC = () => {
         setShowForwardModal(false);
         setSelectionMode(false);
         setSelectedMsgIds(new Set());
+        setFrozenDisplay(null);
     };
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
@@ -2488,8 +2506,9 @@ const Chat: React.FC = () => {
                 return base.slice(start, end);
             }
         }
+        if (frozenDisplay) return frozenDisplay;
         return base.slice(-visibleCount);
-    }, [messages, char?.id, char?.hideSystemLogs, visibleCount, windowedFocusMsgId]);
+    }, [messages, char?.id, char?.hideSystemLogs, visibleCount, windowedFocusMsgId, frozenDisplay]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
@@ -3101,7 +3120,10 @@ const Chat: React.FC = () => {
                             const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
                             visibleCountRef.current = nextVisibleCount;
                             setVisibleCount(nextVisibleCount);
-                            await reloadMessages(nextVisibleCount);
+                            const loaded = await reloadMessages(nextVisibleCount);
+                            if (frozenDisplay && loaded) {
+                                setFrozenDisplay(loaded);
+                            }
                         }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
                     </div>
                 )}
@@ -3305,6 +3327,7 @@ const Chat: React.FC = () => {
                                 el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
                                 stickToBottomRef.current = true;
                                 setShowJumpToLatest(false);
+                                setFrozenDisplay(null);
                             }}
                             className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5"
                         >

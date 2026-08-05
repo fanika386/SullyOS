@@ -57,3 +57,16 @@ export function resolveAutoScrollAction(input: AutoScrollActionInput): AutoScrol
     if (!input.stickToBottom || input.blocked || !input.generating) return 'none';
     return 'snap';
 }
+
+export interface FreezeDisplayDecision {
+    stickToBottom: boolean;
+    blocked: boolean;
+}
+
+/**
+ * 用户离开底部时冻结当前可视窗口：新消息落库后窗口不再从顶部丢旧消息，
+ * 避免"每来一条新气泡视口就往下滑一条"。
+ */
+export function shouldFreezeDisplayWindow(decision: FreezeDisplayDecision): boolean {
+    return !decision.stickToBottom && !decision.blocked;
+}

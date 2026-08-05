@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     isNearBottom,
     resolveAutoScrollAction,
+    shouldFreezeDisplayWindow,
     shouldAutoScrollToBottom,
     shouldShowJumpToLatest,
 } from './chatAutoScroll';
@@ -100,5 +101,19 @@ describe('resolveAutoScrollAction', () => {
 
     it('does nothing when nothing is generating', () => {
         expect(resolveAutoScrollAction({ ...base, generating: false })).toBe('none');
+    });
+});
+
+describe('shouldFreezeDisplayWindow', () => {
+    it('freezes the visible window while the user is away from the bottom', () => {
+        expect(shouldFreezeDisplayWindow({ stickToBottom: false, blocked: false })).toBe(true);
+    });
+
+    it('unfreezes when the user returns to the bottom', () => {
+        expect(shouldFreezeDisplayWindow({ stickToBottom: true, blocked: false })).toBe(false);
+    });
+
+    it('does not freeze while selection or windowed history mode blocks following', () => {
+        expect(shouldFreezeDisplayWindow({ stickToBottom: false, blocked: true })).toBe(false);
     });
 });
