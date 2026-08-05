@@ -2008,6 +2008,19 @@ export default function MemoryPalaceApp() {
             return;
         }
         const scanScope = resolveCharacterDedupScanScope(char);
+        // 保护其他角色未处理的去重结果/候选：不能直接开新扫描把它们悄悄覆盖掉。
+        if (
+            dedupTask.status !== 'idle'
+            && dedupTask.scope.charIds.length > 0
+            && !dedupTask.scope.charIds.includes(char.id)
+        ) {
+            const owner = dedupTask.scope.ownerName || '其他角色';
+            const ok = confirm(
+                `「${owner}」还有未处理的去重结果/候选。\n\n`
+                + `现在扫描【${scanScope.ownerName}】会覆盖它，确定继续吗？`
+            );
+            if (!ok) return;
+        }
         const scanCharIds = scanScope.charIds;
         const scopeLabel = scanScope.scopeLabel;
         const modeLabel = dedupMode === 'ai' ? 'AI 语义去重' : dedupMode === 'semantic' ? '近似语义去重' : '精确正文去重';

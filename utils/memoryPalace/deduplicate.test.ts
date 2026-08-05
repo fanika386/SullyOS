@@ -6,6 +6,7 @@ import {
     buildAiMergedMemoryDraftFromResponse,
     findExactDuplicateMemoryGroups,
     resolveCharacterDedupScanScope,
+    scanExactDuplicateMemories,
     scanSemanticDuplicateMemories,
 } from './deduplicate';
 import type { EventBox, MemoryLink, MemoryNode, MemoryVector } from './types';
@@ -43,6 +44,31 @@ describe('记忆宫殿全局精确去重', () => {
         expect(preview.duplicateCount).toBe(1);
         expect(preview.groups[0].keep.id).toBe('dedup_preview_a1');
         expect(preview.groups[0].duplicates.map(n => n.id)).toEqual(['dedup_preview_a2']);
+    });
+
+    it('精确扫描按 charIds 过滤，绝不把其他角色卷进当前角色的去重范围', async () => {
+        const charA = 'dedup_scope_filter_a';
+        const charB = 'dedup_scope_filter_b';
+        await MemoryNodeDB.saveMany([
+            makeNode('dedup_scope_a1', charA, { content: 'TA 说喜欢雨天。', createdAt: 1000 }),
+            makeNode('dedup_scope_a2', charA, { content: 'TA 说喜欢雨天。', createdAt: 2000 }),
+            makeNode('dedup_scope_b1', charB, { content: 'TA 说喜欢雨天。', createdAt: 3000 }),
+        ]);
+
+        const preview = await scanExactDuplicateMemories({ charIds: [charA] });
+
+        expect(preview.scannedCount).toBe(2);
+        expect(preview.charCount).toBe(1);
+        expect(preview.groups).toHaveLength(1);
+        expect(preview.groups[0].charId).toBe(charA);
+        expect(preview.groups[0].keep.id).toBe('dedup_scope_a1');
+        expect(preview.groups[0].duplicates.map(n => n.id)).toEqual(['dedup_scope_a2']);
+
+        await Promise.all([
+            MemoryNodeDB.delete('dedup_scope_a1'),
+            MemoryNodeDB.delete('dedup_scope_a2'),
+            MemoryNodeDB.delete('dedup_scope_b1'),
+        ]);
     });
 
     it('删除重复项时同步清理向量、关联和事件盒成员引用', async () => {
