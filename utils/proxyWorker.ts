@@ -10,15 +10,15 @@
  *   - 飞书多维表格集成                        → /feishu/*
  *   - 麦当劳 / 瑞幸 点单 MCP                   → /mcp/mcd /mcp/luckin
  *
- * 默认指向作者部署的公共实例。如果作者哪天不再维护、或你想完全自托管，
- * 把自己部署的 worker 地址填进「设置 → 网络代理 (Worker)」即可，
- * 以上全部能力会自动切到你的实例，无需改任何代码。
+ * 本 remix 分支默认指向用户自部署的实例（sullyos-main-proxy.leonanice36.workers.dev），
+ * 不再占用作者公共实例。如果还要换，把自己部署的 worker 地址填进
+ * 「设置 → 网络代理 (Worker)」即可，以上全部能力会自动切到你的实例，无需改任何代码。
  *
  * 注意：小红书 Lite 目前不单独暴露地址输入框，使用这里的主代理 Worker + /api；
  * 网易云音乐仍保留独立地址框，单独填了就以音乐配置为准。
  */
 
-export const DEFAULT_PROXY_WORKER = 'https://sullymeow.ccwu.cc';
+export const DEFAULT_PROXY_WORKER = 'https://sullyos-main-proxy.leonanice36.workers.dev';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
 
@@ -27,7 +27,12 @@ const LS_KEY = 'sully_proxy_worker_url_v1';
 // MusicContext 的迁移逻辑一致：都指向同一个 worker，行为相同）。
 //   - sully-n.qegj567.workers.dev：最早的 workers.dev 默认域名（国内超时）
 //   - sullymeow.ccwu213.cc：旧公共自定义域名，注册已过期、DNS 无法解析（2026-07 起）
-const STALE_HOSTS = [/sully-n\.qegj567\.workers\.dev/i, /sullymeow\.ccwu213\.cc/i];
+//   - sullymeow.ccwu.cc：作者公共实例，remix 换成自部署后不再作为默认（2026-08 起）
+const STALE_HOSTS = [
+  /sully-n\.qegj567\.workers\.dev/i,
+  /sullymeow\.ccwu213\.cc/i,
+  /sullymeow\.ccwu\.cc/i,
+];
 
 const normalize = (url: string): string => url.trim().replace(/\/+$/, '');
 

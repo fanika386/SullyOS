@@ -287,9 +287,9 @@ Phase 2 Round 2 起 push 路径跟本地 fetch 路径**功能对齐**，不再�
 
 **好消息**：现在**主代理已经统一成一个中心配置**，不用再满仓库改硬编码。
 
-**① 主代理 Worker**（默认作者公共实例 `sullymeow.ccwu.cc`，源码单文件 [`worker/index.js`](./worker/index.js)）
+**① 主代理 Worker**（本 remix 默认已指向自部署实例 `sullyos-main-proxy.leonanice36.workers.dev`；原 master 默认作者公共实例 `sullymeow.ccwu.cc`，源码单文件 [`worker/index.js`](./worker/index.js)）
 覆盖：联网搜索 / 热榜（Brave）、WebDAV 云备份、GitHub 云备份、Notion、飞书多维表格、麦当劳 / 瑞幸点单 MCP、网页抓取、Fish Audio TTS、音乐生成、网易云音乐（默认）。
-👉 二改只要在 **「设置 → 网络代理 (Worker)」** 填上你自己部署的地址，以上能力**一键全切走，不用改任何代码**。（`wrangler deploy` 把 `worker/index.js` 丢自己 CF 账号，拿到地址填进去即可。）
+👉 如果还要换成你自己的另一个实例，在 **「设置 → 网络代理 (Worker)」** 填上地址即可，以上能力**一键全切走，不用改任何代码**。（`wrangler deploy` 把 `worker/index.js` 丢自己 CF 账号，拿到地址填进去即可。）
 
 **② 还是独立、要各自部署 / 配置的 Worker**：
 

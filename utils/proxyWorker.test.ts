@@ -71,6 +71,11 @@ describe('proxyWorker 中心配置', () => {
     localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu213.cc');
     expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
   });
+
+  it('旧默认 sullymeow.ccwu.cc（remix 换自部署后）→ 读取时迁移回新默认', () => {
+    localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu.cc');
+    expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
+  });
 });
 
 // 已死的历史公共实例域名必须被迁到当前 worker，否则独立持久化的存量配置
@@ -87,6 +92,10 @@ describe('rewriteStaleWorkerUrl', () => {
 
   it('迁移最早的 workers.dev 默认域名', () => {
     expect(rewriteStaleWorkerUrl('https://sully-n.qegj567.workers.dev/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
+  });
+
+  it('迁移旧默认 sullymeow.ccwu.cc，保留路径', () => {
+    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu.cc/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 
   it('中心配了自部署 worker 时，死域名跟着迁到自部署地址', () => {
@@ -130,5 +139,15 @@ describe('rewriteXhsLiteServerUrl', () => {
         'https://my-own.example.com',
       ),
     ).toBe('http://localhost:18061/api');
+  });
+
+  it('moves the legacy default Lite URL to the new default worker', () => {
+    expect(
+      rewriteXhsLiteServerUrl(
+        'https://sullymeow.ccwu.cc/api',
+        'https://old-worker.example.com',
+        DEFAULT_PROXY_WORKER,
+      ),
+    ).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 });
