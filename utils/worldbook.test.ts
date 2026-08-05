@@ -254,7 +254,7 @@ describe('worldbook duplicate AI review', () => {
     it('resolves the selected preset as the AI review API without changing chat settings', () => {
         const choices = buildWorldbookDedupeAiApiChoices({
             chatApi: { baseUrl: 'https://chat.example.test/v1', apiKey: 'sk-chat', model: 'expensive-chat' },
-            dedicatedApi: { enabled: true, baseUrl: 'https://dedupe.example.test/v1', apiKey: 'sk-dedupe', model: 'cheap-dedupe' },
+            availableModels: ['expensive-chat', 'cheap-reviewer'],
             presets: [{
                 id: 'preset-mini',
                 name: '便宜小模型',
@@ -264,16 +264,38 @@ describe('worldbook duplicate AI review', () => {
         });
 
         expect(choices.selected.id).toBe('preset:preset-mini');
-        expect(choices.options[0].helperText).toContain('默认跟随平时聊天用的模型');
-        expect(choices.options[0].helperText).toContain('比较贵');
-        expect(choices.options[0].helperText).toContain('大材小用');
+        expect(choices.options[0].helperText).toContain('跟随聊天 API 当前配置的模型');
         expect(choices.selected.label).toContain('便宜小模型');
         expect(choices.selected.api).toMatchObject({
             baseUrl: 'https://mini.example.test/v1',
             apiKey: 'sk-mini',
             model: 'mini-reviewer',
         });
-        expect(choices.options.map(option => option.id)).toEqual(['chat', 'dedupe', 'preset:preset-mini']);
+        expect(choices.options.map(option => option.id)).toEqual(['chat', 'chat:expensive-chat', 'chat:cheap-reviewer', 'preset:preset-mini']);
+    });
+
+    it('lets the user pick any model exposed by the chat API and keeps a previously saved model choice', () => {
+        const choices = buildWorldbookDedupeAiApiChoices({
+            chatApi: { baseUrl: 'https://chat.example.test/v1', apiKey: 'sk-chat', model: 'expensive-chat' },
+            availableModels: ['cheap-reviewer', 'middle-model'],
+            selectedChoiceId: 'chat:cheap-reviewer',
+        });
+
+        expect(choices.selected.id).toBe('chat:cheap-reviewer');
+        expect(choices.selected.api).toMatchObject({
+            baseUrl: 'https://chat.example.test/v1',
+            apiKey: 'sk-chat',
+            model: 'cheap-reviewer',
+        });
+
+        // 模型列表里暂时没有之前保存的模型时，也要保留该选项，避免静默跳回默认模型
+        const stale = buildWorldbookDedupeAiApiChoices({
+            chatApi: { baseUrl: 'https://chat.example.test/v1', apiKey: 'sk-chat', model: 'expensive-chat' },
+            availableModels: [],
+            selectedChoiceId: 'chat:old-reviewer',
+        });
+        expect(stale.selected.id).toBe('chat:old-reviewer');
+        expect(stale.selected.api.model).toBe('old-reviewer');
     });
 
     it('sends only locally flagged duplicate candidates to a cheap review model', async () => {

@@ -24,6 +24,44 @@
 后续注意：
 ```
 
+## 2026-08-05 - 世界书去重 AI 选择简化：去掉去重专用配置，改为模型/预设单选
+
+本次任务：
+
+按用户反馈简化世界书 AI 深检的 API 选择：不再保留「去重专用 API 配置」，深检直接复用聊天 API；提供一个持久化的 API/模型单选，支持从聊天 API 的模型列表或已保存预设中选择，选完即保存、可测试、直接用于深检，不再需要额外选「本次使用」。
+
+修改内容：
+
+- `utils/worldbook.ts`：`buildWorldbookDedupeAiApiChoices` 移除 `dedicatedApi`（去重专用）逻辑，新增 `availableModels` 支持，为聊天 API 展开多个模型选项；之前保存过的聊天模型即使暂时不在模型列表里也会保留，避免静默跳回默认模型。
+- `apps/WorldbookApp.tsx`：删除「去重专用 API 配置（可选）」折叠块及其状态/保存/测试逻辑；把「本次使用」下拉框改为「使用的 API / 模型」单选，选择后写入 `localStorage`（`os_worldbook_dedupe_ai_choice`），并提供「刷新模型列表」与「测试连接」。
+- `utils/worldbook.test.ts`：更新预设选择测试，新增聊天 API 模型列表与已保存模型回退测试。
+
+新增模块：
+
+- 无。
+
+影响模块：
+
+- `apps/WorldbookApp.tsx`
+- `utils/worldbook.ts`
+- `utils/worldbook.test.ts`
+
+是否修改业务逻辑：
+
+- 是。去重专用 API 配置入口被移除，AI 深检只使用聊天 API 或已保存预设；选择持久化到本地，不再每次手动选「本次使用」。
+
+是否更新 `01_PROJECT_MAP.md`：
+
+- 否。本次没有新增、移动或删除模块。
+
+是否更新 `02_ARCHITECTURE.md`：
+
+- 否。本次仍属于世界书去重功能内部交互调整。
+
+后续注意：
+
+- 旧版 `apiConfig.worldbookDedupeApi` 若已有数据会留在原字段但不再被读取；用户可在新的单选里直接选当前 API 模型或任意预设。
+
 ## 2026-08-05 - 世界书去重专用 API 配置移入世界书 App
 
 本次任务：

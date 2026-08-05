@@ -82,13 +82,6 @@ export interface WorldbookDedupeAiApiConfig {
     temperature?: number;
 }
 
-export interface WorldbookDedupeAiApiDraft {
-    enabled?: boolean;
-    baseUrl?: string;
-    apiKey?: string;
-    model?: string;
-}
-
 export interface WorldbookDedupeAiApiPresetLike {
     id: string;
     name: string;
@@ -110,8 +103,8 @@ export interface WorldbookDedupeAiApiChoice {
 
 export interface BuildWorldbookDedupeAiApiChoicesInput {
     chatApi: WorldbookDedupeAiApiConfig;
-    dedicatedApi?: WorldbookDedupeAiApiDraft;
     presets?: WorldbookDedupeAiApiPresetLike[];
+    availableModels?: string[];
     selectedChoiceId?: string;
 }
 
@@ -204,46 +197,64 @@ const isDedupeApiConfigured = (api: WorldbookDedupeAiApiConfig): boolean => (
 
 export const buildWorldbookDedupeAiApiChoices = ({
     chatApi,
-    dedicatedApi,
     presets = [],
+    availableModels = [],
     selectedChoiceId,
 }: BuildWorldbookDedupeAiApiChoicesInput): { options: WorldbookDedupeAiApiChoice[]; selected: WorldbookDedupeAiApiChoice } => {
     const chat = trimDedupeApiConfig(chatApi);
     const options: WorldbookDedupeAiApiChoice[] = [{
         id: 'chat',
-        label: `聊天 API：${chat.model || '未配置模型'}`,
-        helperText: '默认跟随平时聊天用的模型；如果平时用的是比较贵的大模型，建议换成便宜一点、通用能力还不错的模型，避免大材小用。',
+        label: chat.model ? `当前 API：${chat.model}` : '当前 API（未配置模型）',
+        helperText: '跟随聊天 API 当前配置的模型；想换模型可直接在下拉里选其它模型或预设。',
         api: chat,
         configured: isDedupeApiConfigured(chat),
     }];
 
-    const hasDedicatedConfig = Boolean(
-        dedicatedApi?.enabled || dedicatedApi?.baseUrl || dedicatedApi?.apiKey || dedicatedApi?.model,
-    );
-    if (hasDedicatedConfig) {
-        const dedicated = trimDedupeApiConfig(dedicatedApi || {}, chat);
+    const seenModels = new Set<string>();
+    availableModels.forEach(model => {
+        const trimmed = String(model || '').trim();
+        if (!trimmed || seenModels.has(trimmed)) return;
+        seenModels.add(trimmed);
+        const api = { ...chat, model: trimmed };
         options.push({
-            id: 'dedupe',
-            label: `去重专用：${dedicated.model || '未配置模型'}`,
-            helperText: '优先使用世界书去重专用配置，空白项会跟随聊天 API。',
-            api: dedicated,
-            configured: isDedupeApiConfigured(dedicated),
+            id: `chat:${trimmed}`,
+            label: `聊天 API · ${trimmed}`,
+            helperText: '使用聊天 API 的地址和 Key，只把这次深检的模型换成这个。',
+            api,
+            configured: isDedupeApiConfigured(api),
         });
-    }
+    });
 
     presets.forEach(preset => {
         const api = trimDedupeApiConfig(preset.config);
         options.push({
             id: `preset:${preset.id}`,
             label: `预设：${preset.name || preset.id}${api.model ? ` · ${api.model}` : ''}`,
-            helperText: '只用于这次粗略扫重，适合选择便宜的小模型。',
+            helperText: '使用这个预设的完整 API 配置（URL / Key / 模型）做这次深检。',
             api,
             configured: isDedupeApiConfigured(api),
         });
     });
 
-    const preferredId = selectedChoiceId || (dedicatedApi?.enabled && hasDedicatedConfig ? 'dedupe' : 'chat');
-    const selected = options.find(option => option.id === preferredId) || options[0];
+    const preferredId = selectedChoiceId || 'chat';
+    let selected = options.find(option => option.id === preferredId);
+    // 之前保存过“聊天 API + 具体模型”，这次模型列表里暂时没有它时也保留该选项，
+    // 避免静默跳回默认模型。
+    if (!selected && preferredId.startsWith('chat:')) {
+        const model = preferredId.slice('chat:'.length);
+        if (model) {
+            const api = { ...chat, model };
+            options.push({
+                id: preferredId,
+                label: `聊天 API · ${model}`,
+                helperText: '使用聊天 API 的地址和 Key，只把这次深检的模型换成这个。',
+                api,
+                configured: isDedupeApiConfigured(api),
+            });
+            selected = options[options.length - 1];
+        }
+    }
+    if (!selected) selected = options[0];
     return { options, selected };
 };
 
