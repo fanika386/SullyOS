@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     isNearBottom,
+    resolveAutoScrollAction,
     shouldAutoScrollToBottom,
     shouldShowJumpToLatest,
 } from './chatAutoScroll';
@@ -75,5 +76,29 @@ describe('shouldShowJumpToLatest', () => {
 
     it('hides the button when selection or windowed history mode blocks following', () => {
         expect(shouldShowJumpToLatest({ ...base, blocked: true })).toBe(false);
+    });
+});
+
+describe('resolveAutoScrollAction', () => {
+    const base = {
+        stickToBottom: true,
+        blocked: false,
+        generating: true,
+    };
+
+    it('snaps to the bottom while pinned and content is generating, instead of restarting a smooth scroll', () => {
+        expect(resolveAutoScrollAction(base)).toBe('snap');
+    });
+
+    it('does nothing while the user is reading older messages', () => {
+        expect(resolveAutoScrollAction({ ...base, stickToBottom: false })).toBe('none');
+    });
+
+    it('does nothing when selection or windowed history mode blocks following', () => {
+        expect(resolveAutoScrollAction({ ...base, blocked: true })).toBe('none');
+    });
+
+    it('does nothing when nothing is generating', () => {
+        expect(resolveAutoScrollAction({ ...base, generating: false })).toBe('none');
     });
 });

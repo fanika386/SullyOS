@@ -51,7 +51,7 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
-import { isNearBottom, shouldAutoScrollToBottom, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
+import { isNearBottom, resolveAutoScrollAction, shouldAutoScrollToBottom, shouldShowJumpToLatest } from '../utils/chatAutoScroll';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -101,7 +101,6 @@ const Chat: React.FC = () => {
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const lastMsgIdRef = useRef<number | null>(null);
-    const scrollThrottleRef = useRef(0);
     const stickToBottomRef = useRef(true);
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
@@ -704,7 +703,6 @@ const Chat: React.FC = () => {
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
-            scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
             setReplyTarget(null);
             setSelectionMode(false);
@@ -856,6 +854,20 @@ const Chat: React.FC = () => {
         }
     }, [messages, activeCharacterId, selectionMode, windowedFocusMsgId]);
 
+    // 生成中吸底跟随：在绘制前瞬时贴底，避免每个内容片段都重启一次
+    // smooth 滚动动画（旧动画没结束又开新的）导致视口一下一下弹跳。
+    useLayoutEffect(() => {
+        const el = scrollRef.current;
+        const action = resolveAutoScrollAction({
+            stickToBottom: stickToBottomRef.current,
+            blocked: selectionMode || windowedFocusMsgId !== null,
+            generating: isTyping || streamingBubbles.length > 0 || streamingThinking.length > 0,
+        });
+        if (el && action === 'snap') {
+            el.scrollTop = el.scrollHeight;
+        }
+    }, [messages, isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, selectionMode, windowedFocusMsgId]);
+
     useEffect(() => {
         setShowJumpToLatest(prev => {
             const next = shouldShowJumpToLatest({
@@ -865,13 +877,6 @@ const Chat: React.FC = () => {
             });
             return next === prev ? prev : next;
         });
-        if (isTyping && scrollRef.current && !selectionMode && windowedFocusMsgId === null && stickToBottomRef.current) {
-            const now = Date.now();
-            if (now - scrollThrottleRef.current > 150) {
-                scrollThrottleRef.current = now;
-                scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-            }
-        }
     }, [messages, isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, selectionMode, windowedFocusMsgId]);
 
     const handleChatScroll = () => {

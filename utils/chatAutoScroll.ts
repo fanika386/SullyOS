@@ -40,3 +40,20 @@ export interface JumpToLatestDecision {
 export function shouldShowJumpToLatest(decision: JumpToLatestDecision): boolean {
     return !decision.stickToBottom && !decision.blocked && decision.generating;
 }
+
+export type AutoScrollAction = 'none' | 'snap' | 'smooth';
+
+export interface AutoScrollActionInput {
+    stickToBottom: boolean;
+    blocked: boolean;
+    generating: boolean;
+}
+
+/**
+ * 吸底跟随的滚动策略：生成中逐条来内容时用瞬时贴底（snap），
+ * 避免每来一段内容就重启一次 smooth 滚动动画造成视口弹跳。
+ */
+export function resolveAutoScrollAction(input: AutoScrollActionInput): AutoScrollAction {
+    if (!input.stickToBottom || input.blocked || !input.generating) return 'none';
+    return 'snap';
+}
