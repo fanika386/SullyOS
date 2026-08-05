@@ -16,6 +16,7 @@ import { resolveChatTheme } from '../utils/groupChat/theme';
 import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../utils/groupChat/parse';
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
+import { buildCopyTextFromMessages } from '../utils/chatCopyText';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, buildMemberPrivateStateBlock, GroupHistoryBlock } from '../utils/groupChat/prompts';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
@@ -668,6 +669,26 @@ const GroupChat: React.FC = () => {
         setSelectionMode(false);
         setSelectedMsgIds(new Set());
         addToast(`已删除 ${selectedMsgIds.size} 条消息`, 'success');
+    };
+
+    const handleBatchCopy = () => {
+        if (selectedMsgIds.size === 0) return;
+        const selectedMsgs = messages
+            .filter(m => selectedMsgIds.has(m.id))
+            .sort((a, b) => a.id - b.id);
+        const parts = buildCopyTextFromMessages(selectedMsgs);
+        if (parts.length === 0) {
+            addToast('选中的消息没有可复制的文本', 'info');
+            return;
+        }
+        navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
+            addToast(`已复制 ${parts.length} 段文字到剪贴板`, 'success');
+            setSelectionMode(false);
+            setSelectedMsgIds(new Set());
+            setFrozenDisplay(null);
+        }).catch(() => {
+            addToast('复制失败，请手动长按复制', 'error');
+        });
     };
 
     const handleReroll = async () => {
@@ -1689,6 +1710,7 @@ ${privateStateBlock ? `\n${privateStateBlock}\n` : ''}
                 setShowPanel={setShowPanel}
                 onSend={() => handleSendMessage(input)}
                 onDeleteSelected={deleteSelectedMessages}
+                onCopySelected={handleBatchCopy}
                 selectedCount={selectedMsgIds.size}
                 emojis={filteredEmojis}
                 categories={categories}
