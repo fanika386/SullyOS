@@ -48,6 +48,39 @@ const SANS = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, s
 const MONO = '"JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace';
 const PIXEL = '"Zpix", "Fusion Pixel 12px", "DotGothic16", "Silver", "Courier New", monospace';
 
+// 与气泡显示共用同一套文本清洗：去掉遗留标记/翻译分隔符/语音标签等，复制出来就是用户看到的内容。
+export const stripMessageJunk = (s: string) => stripFishCuesForDisplay(s
+    .replace(/%%TRANS%%[\s\S]*/gi, '')           // legacy translation marker
+    .replace(/%%BILINGUAL%%/gi, '\n')            // raw bilingual marker → newline
+    // stray bilingual XML tags — 容错版：全角括号/斜杠、标签内空格、简繁、少写 `>` 的截断形态
+    // (如 `</译文`) 都吃掉。掉格式消息已经按破标签落过库，显示端不容错就会原样漏给用户。
+    .replace(/[<＜]\s*[/／]?\s*(?:翻[译譯]|原文|[译譯]文)\s*[>＞]?/g, '')
+    .replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n')   // source tags leaked from history context
+    .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')  // residual double-bracket quotes (incl. typos & Chinese)
+    .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')     // residual single-bracket quotes (incl. typos & Chinese)
+    .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '')  // imitated history render [xx引用了xx说的「…」，并回复了 ↓]
+    .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')  // [回复 "content"]: format
+    // Residual action/system tags that may have leaked through
+    .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
+    .replace(/\[schedule_message[^\]]*\]/g, '')
+    .replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '')  // strip <语音 ...>...</语音> voice tags (tolerate emotion attr / spaced close)
+    .replace(/<[语語]音[^>]*>[\s\S]*$/g, '')             // 未闭合开标签 (历史坏数据): 标签到末尾都是语音内容, 不当正文显示
+    .replace(/<\/\s*[语語]音\s*>/g, '')                  // 孤儿闭合标签 (历史坏数据): 剥标签留正文
+    .replace(/<字幕>([\s\S]*?)<\/字幕>/g, '$1')          // <字幕>: 剥标签留中文 (字幕就是气泡里该显示的文字)
+    .replace(/<\/?字幕>/g, '')                           // 落单字幕标签兜底
+    .replace(/^\s*---\s*$/gm, '')                // standalone --- lines
+    .replace(/``+/g, '')                          // empty/stray backtick pairs
+    .replace(/(^|\s)`(\s|$)/gm, '$1$2')         // lone backticks at boundaries
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')    // markdown links → just text
+    // TTS-only markup (<#秒#> 停顿、(sighs) 动作词) must never show in the bubble
+    .replace(/<#\s*[\d.]+\s*#>/g, '')
+    .replace(/\(([^)]{1,40})\)/g, (m, inner: string) =>
+        VALID_INTERJECTION_TAGS.has(inner.trim().toLowerCase()) ? '' : m)
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([，。！？、；：,.!?…])/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')                  // collapse excess newlines
+    .trim());   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
+
 export const THINKING_CHAIN_PRESETS: Record<Exclude<ThinkingChainStyleId, 'custom'>, ThinkingChainStyleSpec> = {
     echo: {
         bg: 'linear-gradient(135deg, #2a1f3d 0%, #1d1530 45%, #2a1834 100%)',
@@ -3180,39 +3213,6 @@ const MessageItem = React.memo(({
         });
     };
 
-    // Robust content cleanup: strip legacy markers, separators, bilingual tags, stray formatting
-    const stripJunk = (s: string) => stripFishCuesForDisplay(s
-        .replace(/%%TRANS%%[\s\S]*/gi, '')           // legacy translation marker
-        .replace(/%%BILINGUAL%%/gi, '\n')            // raw bilingual marker → newline
-        // stray bilingual XML tags — 容错版：全角括号/斜杠、标签内空格、简繁、少写 `>` 的截断形态
-        // (如 `</译文`) 都吃掉。掉格式消息已经按破标签落过库，显示端不容错就会原样漏给用户。
-        .replace(/[<＜]\s*[/／]?\s*(?:翻[译譯]|原文|[译譯]文)\s*[>＞]?/g, '')
-        .replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n')   // source tags leaked from history context
-        .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')  // residual double-bracket quotes (incl. typos & Chinese)
-        .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')     // residual single-bracket quotes (incl. typos & Chinese)
-        .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '')  // imitated history render [xx引用了xx说的「…」，并回复了 ↓]
-        .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')  // [回复 "content"]: format
-        // Residual action/system tags that may have leaked through
-        .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
-        .replace(/\[schedule_message[^\]]*\]/g, '')
-        .replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '')  // strip <语音 ...>...</语音> voice tags (tolerate emotion attr / spaced close)
-        .replace(/<[语語]音[^>]*>[\s\S]*$/g, '')             // 未闭合开标签 (历史坏数据): 标签到末尾都是语音内容, 不当正文显示
-        .replace(/<\/\s*[语語]音\s*>/g, '')                  // 孤儿闭合标签 (历史坏数据): 剥标签留正文
-        .replace(/<字幕>([\s\S]*?)<\/字幕>/g, '$1')          // <字幕>: 剥标签留中文 (字幕就是气泡里该显示的文字)
-        .replace(/<\/?字幕>/g, '')                           // 落单字幕标签兜底
-        .replace(/^\s*---\s*$/gm, '')                // standalone --- lines
-        .replace(/``+/g, '')                          // empty/stray backtick pairs
-        .replace(/(^|\s)`(\s|$)/gm, '$1$2')         // lone backticks at boundaries
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')    // markdown links → just text
-        // TTS-only markup (<#秒#> 停顿、(sighs) 动作词) must never show in the bubble
-        .replace(/<#\s*[\d.]+\s*#>/g, '')
-        .replace(/\(([^)]{1,40})\)/g, (m, inner: string) =>
-            VALID_INTERJECTION_TAGS.has(inner.trim().toLowerCase()) ? '' : m)
-        .replace(/[ \t]{2,}/g, ' ')
-        .replace(/[ \t]+([，。！？、；：,.!?…])/g, '$1')
-        .replace(/\n{3,}/g, '\n\n')                  // collapse excess newlines
-        .trim());   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
-
     const rawContent = m.content;
 
     // 语音文字（转文字面板 / 语音条预览）显示前：先洗 MiniMax 标记，再洗鱼声情绪 cue，
@@ -3220,13 +3220,13 @@ const MessageItem = React.memo(({
     const cleanVoiceText = (t?: string | null) => stripFishCuesForDisplay(cleanVoiceMarkupForDisplay(t ?? ''));
 
     // 引用快照原样存着 %%BILINGUAL%% 等原始标记（双语消息），预览前先清洗
-    const replyPreview = m.replyTo ? stripJunk(m.replyTo.content) : '';
+    const replyPreview = m.replyTo ? stripMessageJunk(m.replyTo.content) : '';
 
     // Parse %%BILINGUAL%% for bilingual display (langA = "选" language, langB = "译" language)
     const bilingualIdx = rawContent.toLowerCase().indexOf('%%bilingual%%');
     const hasBilingual = bilingualIdx !== -1;
-    const langAContent = hasBilingual ? stripJunk(rawContent.substring(0, bilingualIdx)) : stripJunk(rawContent);
-    const langBContent = hasBilingual ? stripJunk(rawContent.substring(bilingualIdx + '%%BILINGUAL%%'.length)) : '';
+    const langAContent = hasBilingual ? stripMessageJunk(rawContent.substring(0, bilingualIdx)) : stripMessageJunk(rawContent);
+    const langBContent = hasBilingual ? stripMessageJunk(rawContent.substring(bilingualIdx + '%%BILINGUAL%%'.length)) : '';
 
     // Display: "选" language by default, "译" language when toggled
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;

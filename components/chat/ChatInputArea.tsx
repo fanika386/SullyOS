@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal, Copy } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji, AppID } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -17,6 +17,7 @@ interface ChatInputAreaProps {
     onSend: () => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
+    onCopySelected?: () => void;
     selectedCount: number;
     emojis: Emoji[];
     /** 以下会话切换/主题 props 仅私聊使用；群聊等复用方不传（'chars' 面板不会被打开） */
@@ -62,7 +63,7 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-    showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, selectedCount,
+    showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, onCopySelected, selectedCount,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
@@ -410,9 +411,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             转发 ({selectedCount})
                         </button>
                     )}
+                    {onCopySelected && (
+                        <button
+                            onClick={onCopySelected}
+                            disabled={selectedCount === 0}
+                            className={`flex-1 py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${selectedCount === 0 ? 'bg-slate-200 text-slate-400 shadow-none' : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-emerald-200'}`}
+                        >
+                            <Copy className="w-5 h-5" weight="bold" />
+                            复制文本
+                        </button>
+                    )}
                     <button
                         onClick={onDeleteSelected}
-                        className={`${onForwardSelected ? 'flex-1' : 'w-full'} py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2`}
+                        className={`${onForwardSelected || onCopySelected ? 'flex-1' : 'w-full'} py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2`}
                     >
                         <Trash className="w-5 h-5" weight="bold" />
                         删除 ({selectedCount})
