@@ -530,7 +530,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                 if (mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
                     for (const beat of beats) {
                         const char = members.find(m => m.id === beat.charId);
-                        if (!char?.memoryPalaceEnabled) continue;
+                        // 全自动记忆关闭的角色不参与世界剧情后的自动整理。
+                        if (!char?.memoryPalaceEnabled || !(char as any).autoArchiveEnabled) continue;
                         const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
                         void processNewMessages(recentMsgs, char.id, char.name, mpEmb as any, mpLLM as any, userProfile?.name || '', false).catch(() => {});
                     }

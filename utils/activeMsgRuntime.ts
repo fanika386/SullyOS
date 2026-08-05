@@ -391,7 +391,8 @@ async function runPushTailPipeline(
     ? mpLLMConfigured
     : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
 
-  if ((char as any).memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
+  // 全自动记忆关闭时，push 路径也不自动跑 palace 缓冲区处理。
+  if ((char as any).memoryPalaceEnabled && (char as any).autoArchiveEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
     try {
       const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
       // fire-and-forget: pipeline 内部有并发锁 + 水位线检查, 不会抢着跑两份

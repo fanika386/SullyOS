@@ -1604,7 +1604,9 @@ export const useChatAI = ({
                 : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
             // 读 ref 拿到最新的 char 状态；同 id 才信任，否则保守跳过（用户已经切角色了）
             const liveChar = charRef.current?.id === char.id ? charRef.current : null;
-            if (liveChar?.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
+            // 全自动记忆（autoArchiveEnabled）现在是自动整理的真正总开关：
+            // 关掉后聊天后台不会再自动跑 palace 缓冲区处理，只保留手动「一键存入」。
+            if (liveChar?.memoryPalaceEnabled && (liveChar as any).autoArchiveEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
                 const charName = char.name;
                 // 不再预置"正在回味"状态：pipeline 会在水位线未到时立刻 skip，
                 // 预置状态会让"沉思"指示器一闪让用户误以为在干活。

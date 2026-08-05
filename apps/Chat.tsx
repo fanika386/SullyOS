@@ -1945,9 +1945,14 @@ const Chat: React.FC = () => {
     const handleForceVectorize = async () => {
         if (!char || !char.memoryPalaceEnabled || isVectorizing) return;
         const mpEmb = memoryPalaceConfig?.embedding;
-        const mpLLM = memoryPalaceConfig?.lightLLM;
+        const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
+        // 副 API 未配置时回退主 API（与自动路径、记忆宫殿 App 手动路径保持一致），
+        // 这样只开记忆宫殿、关掉全自动记忆、想纯手动一键处理的用户也不会被卡住。
+        const mpLLM = (mpLLMConfigured?.baseUrl)
+            ? mpLLMConfigured
+            : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
         if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM?.baseUrl) {
-            addToast('请先在记忆宫殿设置中配置 API', 'error');
+            addToast('请先在记忆宫殿设置中配置 Embedding 和主 API/副 API', 'error');
             return;
         }
 
@@ -2887,6 +2892,7 @@ const Chat: React.FC = () => {
                 isScheduleFeatureEnabled={isScheduleFeatureOn(char)}
                 onToggleScheduleFeature={handleToggleScheduleFeature}
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
+                isAutoMemoryEnabled={!!(char as any).autoArchiveEnabled}
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}
                 vectorizeProgress={vectorizeProgress}

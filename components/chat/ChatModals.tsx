@@ -122,6 +122,8 @@ interface ChatModalsProps {
     onToggleScheduleFeature?: () => void;
     // Memory Palace force vectorize
     isMemoryPalaceEnabled?: boolean;
+    /** 全自动记忆（原自动归档）是否开启：关闭后自动总结条数不生效 */
+    isAutoMemoryEnabled?: boolean;
     isVectorizing?: boolean;
     /** 待处理条数（排除热区的真实缓冲区口径）：null=未算出/未开弹窗，0=已全同步 */
     vectorizePendingCount?: number | null;
@@ -244,7 +246,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
-    isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
+    isMemoryPalaceEnabled, isAutoMemoryEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
     memoryPalaceAutoSummaryThreshold, onSaveMemoryPalaceAutoSummaryThreshold, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
@@ -548,7 +550,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                      step={10}
                                      value={autoSummaryThresholdInput}
                                      onChange={e => setAutoSummaryThresholdInput(e.target.value)}
-                                     className="w-full h-2 bg-emerald-100 rounded-full appearance-none accent-emerald-500"
+                                     disabled={isAutoMemoryEnabled === false}
+                                     className="w-full h-2 bg-emerald-100 rounded-full appearance-none accent-emerald-500 disabled:opacity-40"
                                  />
                                  <div className="flex justify-between text-[10px] text-emerald-700/70 mt-1">
                                      <span>{MIN_AUTO_SUMMARY_THRESHOLD} · 更快更新</span>
@@ -559,7 +562,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                      {getAutoSummaryThresholdHint(autoSummaryThresholdInput)}
                                  </p>
                                  <p className="text-[10px] text-emerald-800/60 mt-1">
-                                     点底部「保存设置」后，下一次自动总结立即按这个条数判断。
+                                     {isAutoMemoryEnabled === false
+                                         ? '「全自动记忆」已关闭，该条数暂不生效；开启后会按这个条数自动整理。'
+                                         : '点底部「保存设置」后，下一次自动总结立即按这个条数判断。'}
                                  </p>
                              </div>
                              <button
@@ -613,7 +618,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         if (palaceOn && autoOn) {
                             return (
                                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
-                                    ✅ <b>自动归档已开启</b>。palace 处理后系统会按日期自动把聊天归档到"本月日度总结"。<br/>
+                                    ✅ <b>全自动记忆已开启</b>。聊天会自动整理进记忆宫殿，并按日期归档到"本月日度总结"。<br/>
                                     自动归档走的是 <b>记忆宫殿内置风格</b>（保证向量检索质量稳定），
                                     下方模板<b>只对这里的"开始归档"按钮生效</b>——你在这换风格不会影响自动归档。
                                 </div>
@@ -622,9 +627,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         if (palaceOn && !autoOn) {
                             return (
                                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed">
-                                    ⚠️ 记忆宫殿已开，但<b>自动归档没开</b>——记忆宫殿只在后台默默建记忆，不会写进月度总结。<br/>
-                                    想让它自动写 → 神经链接 → 角色 → 记忆宫殿开关下面的 <b>"📚 自动归档"</b>；
-                                    或者继续用下方按钮手动按当前选中的 <b>「{activeName}」</b> 风格跑。
+                                    ⚠️ 记忆宫殿已开，但<b>全自动记忆没开</b>——聊天不会自动整理进记忆宫殿，也不会写日度总结。<br/>
+                                    需要时去聊天设置点 <b>"一键存进记忆宫殿"</b>，
+                                    或继续用下方按钮手动按当前选中的 <b>「{activeName}」</b> 风格跑。
                                 </div>
                             );
                         }

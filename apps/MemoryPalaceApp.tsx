@@ -1328,7 +1328,7 @@ export default function MemoryPalaceApp() {
 
         if (!on) {
             updateCharacter(charId, { autoArchiveEnabled: false } as any);
-            addToast('已关闭全自动记忆（palace 向量化仍在正常运行）', 'info');
+            addToast('已关闭全自动记忆：不再自动整理聊天，也不会写日度总结。可在聊天设置里手动点「一键存进记忆宫殿」', 'info');
             return;
         }
 
@@ -2719,7 +2719,9 @@ export default function MemoryPalaceApp() {
                                                         >
                                                             {syncing
                                                                 ? autoArchiveSyncProgress || '追平中...'
-                                                                : '自动归档 · 推水位线 · 隐藏已总结'}
+                                                                : autoOn
+                                                                    ? '自动整理聊天 · 自动归档 · 隐藏已总结'
+                                                                    : '已关闭：不自动整理 · 不写日度总结'}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -2761,6 +2763,11 @@ export default function MemoryPalaceApp() {
                                                     />
                                                 </label>
                                             </div>
+                                            {palaceOn && !autoOn && (
+                                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, lineHeight: 1.5, padding: '0 4px' }}>
+                                                    关闭后不会自动整理聊天，也不写日度总结。需要时可在聊天设置里点「一键存进记忆宫殿」手动处理。
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>

@@ -270,7 +270,8 @@ const DateApp: React.FC = () => {
         // 用 charactersRef 读最新状态，避免见面流程中用户去 MemoryPalaceApp 关掉宫殿后
         // 这里仍然按 charForHook 闭包里的旧 enabled 触发一次 LLM 总结
         const liveBefore = charactersRef.current.find(c => c.id === charForHook.id) || null;
-        if (!liveBefore?.memoryPalaceEnabled) return;
+        // 全自动记忆关闭时，见面流程也不自动整理记忆。
+        if (!liveBefore?.memoryPalaceEnabled || !(liveBefore as any).autoArchiveEnabled) return;
         const mpEmb = memoryPalaceConfig?.embedding;
         const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
         const mpLLM = (mpLLMConfigured?.baseUrl)

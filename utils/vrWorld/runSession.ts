@@ -644,7 +644,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             const mpEmb = memoryPalaceConfig?.embedding;
             const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
             const mpLLM = (mpLLMConfigured?.baseUrl) ? mpLLMConfigured : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
-            if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
+            if ((char as any).memoryPalaceEnabled && (char as any).autoArchiveEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
                 void processNewMessages(recentMsgs, char.id, char.name, mpEmb as any, mpLLM as any, userProfile?.name || '', false).catch(() => {});
             }
