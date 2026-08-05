@@ -14,7 +14,7 @@ import {
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
     scanExactDuplicateMemories, scanSemanticDuplicateMemories, scanAiSemanticDuplicateMemories, mergeMemoryNodesWithAi, applyExactDuplicateMemoryDeletion,
     resolveCharacterDedupScanScope,
-    dedupTaskStore, useDedupTask,
+    dedupTaskStore, useDedupTask, shouldNotifyDedupCompletion,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft, DedupMode } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
@@ -582,6 +582,22 @@ export default function MemoryPalaceApp() {
     const dedupStreamTickRef = React.useRef(0);
     const dedupStartedAtRef = React.useRef(0);
     const displayedStepRef = React.useRef<string | null>(null);
+    // 去重任务可能跨页面/跨 App 继续跑：完成时只有用户已经不在结果可见的页面才弹 toast。
+    const dedupMountedRef = React.useRef(true);
+    const dedupViewRef = React.useRef(view);
+    const dedupCharIdRef = React.useRef(char?.id);
+    dedupViewRef.current = view;
+    dedupCharIdRef.current = char?.id;
+
+    /** 用户是否正待在能看到该角色去重结果的页面上（设置页 or 宫殿主页的结果提示条） */
+    const dedupResultVisibleOnCurrentPage = (charIds: string[]): boolean => {
+        return !shouldNotifyDedupCompletion({
+            mounted: dedupMountedRef.current,
+            view: dedupViewRef.current,
+            currentCharId: dedupCharIdRef.current,
+            taskCharIds: charIds,
+        });
+    };
 
     const clearDedupWaitTimer = () => {
         if (dedupWaitTimerRef.current) {
@@ -695,8 +711,12 @@ export default function MemoryPalaceApp() {
         }
     }, [dedupTask.progress, dedupTask.status, dedupTask.startedAt]);
 
-    useLayoutEffect(() => () => {
-        clearDedupTimers();
+    useLayoutEffect(() => {
+        dedupMountedRef.current = true;
+        return () => {
+            dedupMountedRef.current = false;
+            clearDedupTimers();
+        };
     }, []);
 
     // 用户点了完成 toast：打开记忆宫殿并直接跳到去重结果/审核面板
@@ -2070,7 +2090,9 @@ export default function MemoryPalaceApp() {
                         result: `[ok]${scopeLabel} · ${modeLabel}：本地向量预筛 ${preview.scannedCount} 条记忆${vectorPart}，AI 确认 ${preview.aiCallCount || 0} 组候选，没有发现可删除的重复项`,
                         finishedAt: Date.now(),
                     });
-                    addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，点这里查看结果`, 'success', 8000, jumpToDedupResult);
+                    if (!dedupResultVisibleOnCurrentPage(scanCharIds)) {
+                        addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，点这里查看结果`, 'success', 8000, jumpToDedupResult);
+                    }
                     return;
                 }
 
@@ -2082,7 +2104,9 @@ export default function MemoryPalaceApp() {
                     finishedAt: Date.now(),
                 });
                 setDedupSelectedDeleteIds(new Set());
-                addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，找到 ${preview.duplicateCount} 条候选，点这里确认`, 'success', 8000, jumpToDedupResult);
+                if (!dedupResultVisibleOnCurrentPage(scanCharIds)) {
+                    addToast(`${scanScope.ownerName} 的 AI 记忆去重扫描完成，找到 ${preview.duplicateCount} 条候选，点这里确认`, 'success', 8000, jumpToDedupResult);
+                }
                 return;
             }
 
@@ -2119,7 +2143,9 @@ export default function MemoryPalaceApp() {
                     result: `[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆${vectorPart}，没有发现重复项`,
                     finishedAt: Date.now(),
                 });
-                addToast(`${scanScope.ownerName} 的记忆去重扫描完成，没有发现重复，点这里查看`, 'success', 8000, jumpToDedupResult);
+                if (!dedupResultVisibleOnCurrentPage(scanCharIds)) {
+                    addToast(`${scanScope.ownerName} 的记忆去重扫描完成，没有发现重复，点这里查看`, 'success', 8000, jumpToDedupResult);
+                }
                 return;
             }
 
@@ -2135,7 +2161,9 @@ export default function MemoryPalaceApp() {
                 result: `[ok]${scopeLabel} · ${modeLabel}：扫描 ${preview.scannedCount} 条记忆，覆盖 ${preview.charCount} 个角色，找到 ${preview.groups.length} 组重复、${preview.duplicateCount} 条建议删除项${semanticHint}。候选已默认全选，确认下面的内容后再删除。`,
                 finishedAt: Date.now(),
             });
-            addToast(`${scanScope.ownerName} 的记忆去重扫描完成，找到 ${preview.duplicateCount} 条重复，点这里确认`, 'success', 8000, jumpToDedupResult);
+            if (!dedupResultVisibleOnCurrentPage(scanCharIds)) {
+                addToast(`${scanScope.ownerName} 的记忆去重扫描完成，找到 ${preview.duplicateCount} 条重复，点这里确认`, 'success', 8000, jumpToDedupResult);
+            }
         } catch (e: any) {
             dedupTaskStore.set({ status: 'error', progress: null, result: `[err]去重失败：${e?.message || e}`, finishedAt: Date.now() });
         }
@@ -2200,7 +2228,9 @@ export default function MemoryPalaceApp() {
                 result: `${result.failed.length > 0 ? '[warn]' : '[ok]'}${modeLabel}：删除 ${result.deleted}/${result.duplicateCount} 条已确认重复记忆${remotePart}${failPart}`,
                 finishedAt: Date.now(),
             });
-            addToast(`${ownerName} 的记忆去重完成，删除 ${result.deleted} 条，点这里查看`, result.failed.length > 0 ? 'info' : 'success', 8000, jumpToDedupResult);
+            if (!dedupResultVisibleOnCurrentPage(task.scope.charIds)) {
+                addToast(`${ownerName} 的记忆去重完成，删除 ${result.deleted} 条，点这里查看`, result.failed.length > 0 ? 'info' : 'success', 8000, jumpToDedupResult);
+            }
             setDedupSelectedDeleteIds(new Set());
             await loadStats();
         } catch (e: any) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dedupTaskStore } from './dedupTaskStore';
+import { dedupTaskStore, shouldNotifyDedupCompletion } from './dedupTaskStore';
 
 function scopeFor(charId: string, name: string) {
     return { charIds: [charId], scopeLabel: `【${name}】`, ownerName: name };
@@ -48,5 +48,27 @@ describe('记忆宫殿去重全局任务状态的角色归属', () => {
         expect(state.result).toBe('正在扫描 B…');
 
         dedupTaskStore.reset();
+    });
+});
+
+describe('去重完成 toast 的触发时机', () => {
+    const base = {
+        mounted: true,
+        view: 'settings',
+        currentCharId: 'char_a',
+        taskCharIds: ['char_a'],
+    };
+
+    it('用户还待在当前角色的设置页或宫殿主页时，不弹“点这里查看”', () => {
+        expect(shouldNotifyDedupCompletion({ ...base, view: 'settings' })).toBe(false);
+        expect(shouldNotifyDedupCompletion({ ...base, view: 'palace' })).toBe(false);
+    });
+
+    it('用户离开当前页面（其他视图 / 其他角色 / App 卸载）时，才弹提醒', () => {
+        expect(shouldNotifyDedupCompletion({ ...base, view: 'all' })).toBe(true);
+        expect(shouldNotifyDedupCompletion({ ...base, view: 'picker' })).toBe(true);
+        expect(shouldNotifyDedupCompletion({ ...base, currentCharId: 'char_b' })).toBe(true);
+        expect(shouldNotifyDedupCompletion({ ...base, taskCharIds: ['char_b'] })).toBe(true);
+        expect(shouldNotifyDedupCompletion({ ...base, mounted: false })).toBe(true);
     });
 });

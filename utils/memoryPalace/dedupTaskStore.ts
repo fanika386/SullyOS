@@ -35,6 +35,28 @@ export interface DedupTaskState {
     focusRequestAt?: number;
 }
 
+export interface DedupToastGateInput {
+    mounted: boolean;
+    view: string;
+    currentCharId?: string;
+    taskCharIds: string[];
+}
+
+/** 去重完成后是否还要弹「点这里查看/确认」toast。
+ *  用户正待在能看到该角色结果的地方（设置页 / 宫殿主页的结果提示条）时不需要弹；
+ *  离开页面、切到别的角色、或 App 已卸载时，才需要 toast 把人叫回来。 */
+export function shouldNotifyDedupCompletion({
+    mounted,
+    view,
+    currentCharId,
+    taskCharIds,
+}: DedupToastGateInput): boolean {
+    if (!mounted) return true;
+    const ownerCharId = taskCharIds[0];
+    if (!ownerCharId || currentCharId !== ownerCharId) return true;
+    return view !== 'settings' && view !== 'palace';
+}
+
 const STORAGE_KEY = 'sullyos.memoryPalace.dedupTask.v1';
 
 const emptyTask = (): DedupTaskState => ({
