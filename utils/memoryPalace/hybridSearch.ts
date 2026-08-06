@@ -1,7 +1,8 @@
 /**
  * Memory Palace — 混合搜索 + 房间评分
  *
- * 85% 向量 + 15% BM25 融合，然后按房间特性调整评分。
+ * 85% 向量 + 15% BM25 融合，然后按房间特性调整评分，
+ * 最后加轻量实体重叠加成（引号短语 / 拉丁词 / 标签）。
  */
 
 import type { EmbeddingConfig, MemoryNode, MemoryRoom, MemoryVector, ScoredMemory, RemoteVectorConfig } from './types';
@@ -11,6 +12,7 @@ import { vectorSearch } from './vectorSearch';
 import { bm25Search, bm25SearchIndexed, bm25SearchDualRun } from './bm25';
 import { bm25Index } from './bm25Index';
 import { calculateEffectiveImportance } from './consolidation';
+import { entityOverlapBonus, extractEntities } from './entities';
 
 // ─── BM25 灰度开关 ────────────────────────────────────
 //
@@ -67,6 +69,8 @@ const RECENCY_DECAY = 0.999; // per hour
 // 最终加成：finalScore += FAMILIARITY_WEIGHT * familiarity
 // 权重 0.05 —— 足够让熟悉话题冒头，不会压过 similarity / importance。
 const FAMILIARITY_WEIGHT = 0.05;
+/** 实体重叠加成权重：让提到同一实体（人名 / 品牌 / 引号短语 / 标签）的记忆更容易浮现 */
+const ENTITY_WEIGHT = 0.10;
 
 function familiarityBonus(accessCount: number): number {
     const n = Math.max(0, (accessCount || 0) - 1);
@@ -146,6 +150,7 @@ export async function hybridSearch(
         vectorSim: number;
         bm25Score: number;
     }>();
+    const queryEntities = extractEntities(query);
 
     // 归一化 BM25 分数到 0-1
     const maxBm25 = bm25Results.length > 0 ? bm25Results[0].score : 1;
@@ -182,6 +187,12 @@ export async function hybridSearch(
 
     for (const [, entry] of scoreMap) {
         const { node, vectorSim, bm25Score } = entry;
+
+        // 实体信号：查询和这条记忆共享的实体越多，加成越高
+        const entityBonus = entityOverlapBonus(
+            queryEntities,
+            extractEntities(node.content, node.tags),
+        );
 
         // 混合相似度
         const hybridSim = VECTOR_WEIGHT * vectorSim + BM25_WEIGHT * bm25Score;
@@ -220,7 +231,9 @@ export async function hybridSearch(
 
         // 熟悉度加成（轻权重，防止常聊话题沉底）
         const familiarity = familiarityBonus(node.accessCount);
-        const roomScore = baseScore + FAMILIARITY_WEIGHT * familiarity;
+        const roomScore = baseScore
+            + FAMILIARITY_WEIGHT * familiarity
+            + ENTITY_WEIGHT * entityBonus;
 
         results.push({
             node,
