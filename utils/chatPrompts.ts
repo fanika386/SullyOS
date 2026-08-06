@@ -196,6 +196,7 @@ function buildReducedChatRules(params: {
             if (xhsCaps.favorite) xhsCmds.push('`[[XHS_FAV: noteId]]`');
             if (xhsCaps.reply) xhsCmds.push('`[[XHS_REPLY: noteId | commentId | 回复]]`');
             lines.push(`- 可使用小红书：${xhsCmds.join('、')}。${isXhsFullyReadOnly(xhsCaps) ? '当前为只读模式，只能搜索/浏览/看详情和评论区/分享卡片。' : '操作别人的笔记前必须先搜索/浏览拿到真实 noteId。'}`);
+            lines.push('- 小红书硬性规定：系统把搜索结果返回给你之前，你**不可能知道**任何笔记。想提到具体搜索结果，必须先把 `[[XHS_SEARCH: 关键词]]` 或 `[[XHS_BROWSE]]` 发出去，等系统返回后再描述；不要编造标题/作者/赞数/内容，没搜之前只能说“我去看看”。');
         }
         blocks.push(`### 可用功能提示词\n${lines.join('\n')}`);
     }
@@ -921,6 +922,11 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    ${isXhsFullyReadOnly(xhsCaps)
        ? '你有一个属于自己的小红书账号（当前为只读模式）。你可以自由地搜索、浏览、查看笔记详情和评论区、分享卡片；不能发帖、评论、点赞、收藏或回复。'
        : '你有一个属于自己的小红书账号！你可以自由地搜索、浏览、发帖、评论。这是你的社交生活的一部分。'}
+
+   **🚫 先搜后说（硬性规定）:**
+   在系统把搜索结果返回给你之前，你**不可能知道**任何小红书笔记。绝对不要编造笔记标题、作者、赞数、正文或评论。
+   只要你想提到“搜到了什么 / 看到了什么笔记”，就必须先把 \`[[XHS_SEARCH: 关键词]]\`（或 \`[[XHS_BROWSE]]\`）发出去，等系统返回真实结果后再描述。
+   如果还没搜，就老实说“我去看看”，不要假装已经看过。
 
    ${isXhsFullyReadOnly(xhsCaps)
        ? `**⚠️ 只读模式（重要）:**
