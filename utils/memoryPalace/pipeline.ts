@@ -401,6 +401,8 @@ export async function retrieveMemories(
         //    切进 spike/rerank/context 会把 Embedding 批量请求顶爆
         //    （硅基流动 400 code 20015）。卡片类翻成可读文本再参与检索。
         const querySourceMessages = sanitizeQuerySourceMessages(recentMessages, charName, userName);
+        // 已知实体：角色名 + 用户名，让检索时能按“提到谁”联动（中文人名也能认）
+        const knownNames = [charName, userName].filter((n): n is string => Boolean(n && n.trim()));
         const { userIntent, contextTurns, fallbackAll } = splitLastTurnQueries(querySourceMessages);
 
         // 抽取每条有意义的 user 消息作为独立 spike + 二次拆分子 spike
@@ -596,14 +598,14 @@ export async function retrieveMemories(
                     queryVector: queryVectors[i],
                     allNodes,
                     allVectors,
-                })
+                }, knownNames)
             );
             const contextPromise = contextQueryTrimmed
                 ? hybridSearch(contextQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {
                     queryVector: queryVectors[effectiveSpikes.length],
                     allNodes,
                     allVectors,
-                })
+                }, knownNames)
                 : Promise.resolve([] as ScoredMemory[]);
 
             // Rerank 的 pool hybridSearch 跟主路一起发（共享 backend RTT）
@@ -622,7 +624,7 @@ export async function retrieveMemories(
                     queryVector: queryVectors[queriesToEmbed.length - 1],
                     allNodes,
                     allVectors,
-                }).catch(e => {
+                }, knownNames).catch(e => {
                     console.warn(`🎯 [Rerank] pool 检索失败（主召回不受影响）: ${e?.message || e}`);
                     return [] as ScoredMemory[];
                 })
@@ -740,12 +742,12 @@ export async function retrieveMemories(
                 remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
             );
             // 先 fire fallback 主搜 + rerank pipeline，两个独立管线并行
-            const fallbackSearchPromise = hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig);
+            const fallbackSearchPromise = hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig, undefined, knownNames);
             if (doRerank) {
                 rerankApiPromise = (async (): Promise<RerankApiResult | null> => {
                     const rrT0 = performance.now();
                     try {
-                        const pool = await hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, undefined);
+                        const pool = await hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, undefined, knownNames);
                         if (pool.length === 0) {
                             console.log(`🎯 [Rerank] 独立检索候选池为空，跳过 rerank`);
                             retrieveTimings.push({ label: 'rerankDocuments(skip)', kind: 'NET', ms: Math.round(performance.now() - rrT0) });

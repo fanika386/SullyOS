@@ -109,6 +109,7 @@ export async function hybridSearch(
     topK: number = 15,
     remoteVectorConfig?: RemoteVectorConfig,
     prefetch?: HybridSearchPrefetch,
+    knownNames?: string[],
 ): Promise<ScoredMemory[]> {
     // 1. 向量化查询（优先用 pipeline 预取好的，省掉 K 次 API 调用）
     const queryVector = prefetch?.queryVector ?? await getEmbedding(query, embeddingConfig);
@@ -150,7 +151,7 @@ export async function hybridSearch(
         vectorSim: number;
         bm25Score: number;
     }>();
-    const queryEntities = extractEntities(query);
+    const queryEntities = extractEntities(query, knownNames);
 
     // 归一化 BM25 分数到 0-1
     const maxBm25 = bm25Results.length > 0 ? bm25Results[0].score : 1;
@@ -191,7 +192,7 @@ export async function hybridSearch(
         // 实体信号：查询和这条记忆共享的实体越多，加成越高
         const entityBonus = entityOverlapBonus(
             queryEntities,
-            extractEntities(node.content, node.tags),
+            extractEntities(node.content, [...node.tags, ...(knownNames ?? [])]),
         );
 
         // 混合相似度
