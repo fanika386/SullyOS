@@ -6,6 +6,7 @@
 import { safeResponseJson } from './safeApi';
 import { DB } from './db';
 import { getProxyWorkerUrl } from './proxyWorker';
+import { DEFAULT_XHS_CAPABILITIES } from './xhsCapabilities';
 import { nowInTimeZone } from './timezone';
 import { getLocalDateKey } from './localDate';
 
@@ -64,6 +65,7 @@ export interface RealtimeConfig {
         loggedInNickname?: string;
         loggedInUserId?: string;
         userXsecToken?: string; // 从 feed 列表自动获取，用于 getUserProfile 等
+        capabilities?: import('../types').XhsCapabilities;  // 能力范围，缺省回落默认
     };
 
     // 缓存配置
@@ -82,7 +84,7 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     notionApiKey: '',
     notionDatabaseId: '',
     xhsEnabled: false,
-    xhsMcpConfig: { enabled: false, serverUrl: `${getProxyWorkerUrl()}/api`, cookie: undefined, loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
+    xhsMcpConfig: { enabled: false, serverUrl: `${getProxyWorkerUrl()}/api`, cookie: undefined, loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined, capabilities: { ...DEFAULT_XHS_CAPABILITIES } },
     cacheMinutes: 30
 };
 

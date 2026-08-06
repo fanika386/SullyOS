@@ -14,6 +14,8 @@ import { CharacterProfile, UserProfile, XhsActivityRecord, XhsFreeRoamSession, A
 import { ContextBuilder } from './context';
 import { XhsMcpClient, McpToolResult, extractNotesFromMcpData, normalizeNote } from './xhsMcpClient';
 import { DB } from './db';
+import { resolveXhsCapabilities } from './xhsCapabilities';
+import type { XhsCapabilities } from '../types';
 
 // ==================== Types ====================
 
@@ -98,6 +100,7 @@ const buildFreeRoamSystemPrompt = (
     user: UserProfile,
     recentChatSummary: string,
     pastActivities: XhsActivityRecord[],
+    caps: XhsCapabilities,
 ): string => {
     // 加载完整上下文（含详细记忆和心情标签），让角色在自由活动时保持情感连贯
     const coreContext = ContextBuilder.buildCoreContext(char, user, true);
@@ -133,7 +136,7 @@ ${pastStr}
 - 你是一个有自己想法和审美的人。根据你的性格、兴趣和**最近与用户的对话内容**来决定做什么。
 - 重要：你的想法和行动应该反映你**当下**的心情和最近的经历，不要沉浸在遥远的回忆里。
 - 你可以：
-  - **发帖**（分享生活/感想/见闻）
+${caps.post ? '  - **发帖**（分享生活/感想/见闻）\n' : ''}
   - **搜索**（感兴趣的话题）
   - **刷首页**（看看有什么有趣的）
   - **查看自己的主页**（看看自己发过的帖子有多少赞了、有没有新评论）
@@ -141,21 +144,21 @@ ${pastStr}
 - 刷到或搜索到帖子后，你还可以：
   - 查看感兴趣帖子的**详细内容和评论区**
   - 保存有趣的话题
-  - **只回复自己帖子评论区的人**
-- **⚠️ 评论限制（非常重要）**: 不要在陌生人的帖子下面评论或回复！你只能在**自己发的帖子**的评论区里回复别人。在别人帖子下留言会很奇怪，而且会让真实用户困惑。浏览别人的帖子时，只看不评论。
+${(caps.comment || caps.reply) ? '  - **只回复自己帖子评论区的人**' : '  - （当前未开放评论/回复）'}
+- **⚠️ 评论限制（非常重要）**: 不要在陌生人的帖子下面评论或回复！${(caps.comment || caps.reply) ? '你只能在**自己发的帖子**的评论区里回复别人。在别人帖子下留言会很奇怪，而且会让真实用户困惑。浏览别人的帖子时，只看不评论。' : '当前未开放评论/回复，任何帖子都只看不评论、不回复。'}
 - **搜索自己的帖子**: 你可以用自己的名字作为关键词搜索，看看自己发过的帖子现在怎么样了。
-- 不要每次都发帖，真实的人有时候只是刷刷看看。
-- 发的帖子要像你自己会发的东西——符合人设，不要写得太正式或像AI。
+- ${caps.post ? '不要每次都发帖，真实的人有时候只是刷刷看看。' : '不要输出任何发帖/评论/回复/点赞/收藏指令。'}
+- ${caps.post ? '发的帖子要像你自己会发的东西——符合人设，不要写得太正式或像AI。' : ''}
 - 你可以选择保存一些有趣的帖子内容作为话题，下次和用户聊天时可以提起。`;
 };
 
-const buildDecisionPrompt = (): string => {
+const buildDecisionPrompt = (caps: XhsCapabilities): string => {
     return `现在是你的自由活动时间。你想在小红书上做什么？
 
 请用以下JSON格式回答（只返回JSON，不要其他内容）:
 \`\`\`json
 {
-    "action": "post" | "browse" | "search" | "check_profile" | "idle",
+    "action": ${caps.post ? '"post" | "browse" | "search" | "check_profile" | "idle"' : '"browse" | "search" | "check_profile" | "idle"'},
     "thinking": "你的内心想法（用第一人称，符合你的性格）",
     "title": "帖子标题（仅 action=post 时）",
     "content": "帖子正文（仅 action=post 时）",
@@ -165,7 +168,7 @@ const buildDecisionPrompt = (): string => {
 \`\`\`
 
 示例:
-- 想发帖: {"action":"post","thinking":"今天天气好好，想分享一下我的心情","title":"阳光真好","content":"窗外的光打在桌上，觉得活着真好。","tags":["日常","心情"]}
+${caps.post ? '- 想发帖: {"action":"post","thinking":"今天天气好好，想分享一下我的心情","title":"阳光真好","content":"窗外的光打在桌上，觉得活着真好。","tags":["日常","心情"]}\n' : ''}
 - 想搜索: {"action":"search","thinking":"昨天和主人聊到了咖啡，我也想看看","keyword":"手冲咖啡推荐"}
 - 想搜索自己的帖子: {"action":"search","thinking":"想看看我之前发的帖子怎么样了","keyword":"你自己的名字或帖子关键词"}
 - 想刷首页: {"action":"browse","thinking":"没什么特别想做的，刷刷看有什么好玩的"}
@@ -200,7 +203,7 @@ ${notesList}
 如果你对某篇帖子特别感兴趣，想看它的完整正文和评论区，可以填 wantToViewDetail。`;
 };
 
-const buildDetailReactionPrompt = (noteTitle: string, noteContent: string, comments: any[]): string => {
+const buildDetailReactionPrompt = (noteTitle: string, noteContent: string, comments: any[], caps: XhsCapabilities): string => {
     const commentsList = comments.slice(0, 15).map((c: any, i: number) => {
         const commentId = c.commentId || c.comment_id || c.id || '';
         const author = c.authorName || c.author_name || c.nickname || c.user?.nickname || '匿名';
@@ -217,8 +220,9 @@ ${comments.length > 0 ? `评论区:\n${commentsList}` : '这条帖子还没有�
 
 你怎么看这条帖子和评论区？
 
-⚠️ 重要：如果这是**你自己发的帖子**，你可以回复评论区的人、或留个新评论。
-如果这是**别人的帖子**，只看不评论——在陌生人帖子下留AI评论会打扰真实用户。
+${(caps.comment || caps.reply)
+    ? '⚠️ 重要：如果这是**你自己发的帖子**，你可以回复评论区的人、或留个新评论。\n如果这是**别人的帖子**，只看不评论——在陌生人帖子下留AI评论会打扰真实用户。'
+    : '⚠️ 当前未开放评论/回复：无论是不是你自己的帖子，都**只看不互动**，不要评论、回复、点赞。'}
 
 用JSON回答:
 \`\`\`json
@@ -229,7 +233,7 @@ ${comments.length > 0 ? `评论区:\n${commentsList}` : '这条帖子还没有�
 }
 \`\`\`
 
-如果是别人的帖子，wantToReply 和 wantToComment 都不要填。只有自己的帖子才可以互动。`;
+${(caps.comment || caps.reply) ? '如果是别人的帖子，wantToReply 和 wantToComment 都不要填。只有自己的帖子才可以互动。' : '当前未开放评论/回复，wantToReply 和 wantToComment 一律不要填。'}`;
 };
 
 const buildProfileReactionPrompt = (profileInfo: string, notes: any[]): string => {
@@ -289,6 +293,7 @@ const handleViewDetail = async (
     char: CharacterProfile,
     session: XhsFreeRoamSession,
     callbacks: FreeRoamCallbacks,
+    caps: XhsCapabilities,
 ): Promise<void> => {
     callbacks.onStatus(`${char.name}在查看帖子「${noteTitle}」的详情...`);
 
@@ -325,7 +330,7 @@ const handleViewDetail = async (
 
     // Let character react to detail + comments
     callbacks.onStatus(`${char.name}在看评论区...`);
-    const reactionRaw = await callLlm(apiConfig, systemPrompt, buildDetailReactionPrompt(noteTitle, noteContent, comments));
+    const reactionRaw = await callLlm(apiConfig, systemPrompt, buildDetailReactionPrompt(noteTitle, noteContent, comments, caps));
     const reaction = parseJson<LlmDetailReaction>(reactionRaw);
 
     if (reaction?.thinking) {
@@ -350,7 +355,7 @@ const handleViewDetail = async (
     callbacks.onActivity(detailRecord);
 
     // If character wants to reply to a comment
-    if (reaction?.wantToReply?.commentId && reaction.wantToReply.reply) {
+    if (caps.reply && reaction?.wantToReply?.commentId && reaction.wantToReply.reply) {
         // XHS 反爬: get-feed-detail 刚用过 xsec_token 打开笔记页，
         // 紧接着 post-comment 再次打开同一页面会被临时封锁("笔记不可访问")。
         // 等几秒让 xsec_token 冷却，避免触发反爬。
@@ -381,7 +386,7 @@ const handleViewDetail = async (
     }
 
     // If character wants to leave a new comment on the note
-    if (reaction?.wantToComment?.comment) {
+    if (caps.comment && reaction?.wantToComment?.comment) {
         // 同上: 避免 xsec_token 重复访问触发反爬
         callbacks.onStatus(`${char.name}在想怎么评论...`);
         await new Promise(r => setTimeout(r, 5000));
@@ -421,6 +426,7 @@ export const XhsFreeRoamEngine = {
         const mcpUrl = realtimeConfig.xhsMcpConfig?.serverUrl;
         if (!mcpUrl) throw new Error('MCP Server URL 未配置');
         XhsMcpClient.setCookie(realtimeConfig.xhsMcpConfig?.cookie); // lite Worker auth (no-op for local backends)
+        const caps = resolveXhsCapabilities(realtimeConfig.xhsMcpConfig?.capabilities);
 
         const sessionId = `xfr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const session: XhsFreeRoamSession = {
@@ -441,11 +447,11 @@ export const XhsFreeRoamEngine = {
             callbacks.onStatus(`${char.name}正在思考...`);
             const pastActivities = await DB.getXhsActivities(char.id, 10);
             const chatSummary = await getRecentChatContext(char.id, char.contextLimit || 500);
-            const systemPrompt = buildFreeRoamSystemPrompt(char, user, chatSummary, pastActivities);
+            const systemPrompt = buildFreeRoamSystemPrompt(char, user, chatSummary, pastActivities, caps);
 
             // 4. Character decides
             callbacks.onStatus(`${char.name}在决定做什么...`);
-            const decisionRaw = await callLlm(apiConfig, systemPrompt, buildDecisionPrompt());
+            const decisionRaw = await callLlm(apiConfig, systemPrompt, buildDecisionPrompt(caps));
             const decision = parseJson<LlmDecision>(decisionRaw);
 
             if (!decision) {
@@ -455,7 +461,7 @@ export const XhsFreeRoamEngine = {
             callbacks.onThinking(decision.thinking);
 
             // 5. Execute based on decision
-            if (decision.action === 'idle') {
+            if (decision.action === 'idle' || (!caps.post && decision.action === 'post')) {
                 const idleRecord: XhsActivityRecord = {
                     id: `xa_${Date.now()}`,
                     characterId: char.id,
@@ -469,7 +475,7 @@ export const XhsFreeRoamEngine = {
                 session.activities.push(idleRecord);
                 callbacks.onActivity(idleRecord);
             }
-            else if (decision.action === 'post') {
+            else if (decision.action === 'post' && caps.post) {
                 callbacks.onStatus(`${char.name}正在发帖: ${decision.title}...`);
 
                 // Try to get images from XHS stock
@@ -579,6 +585,7 @@ export const XhsFreeRoamEngine = {
                             reaction.wantToViewDetail.noteId,
                             reaction.wantToViewDetail.title || '',
                             notes, char, session, callbacks,
+                            caps,
                         );
                     }
                 }
@@ -658,6 +665,7 @@ export const XhsFreeRoamEngine = {
                             reaction.wantToViewDetail.noteId,
                             reaction.wantToViewDetail.title || '',
                             notes, char, session, callbacks,
+                            caps,
                         );
                     }
                 }

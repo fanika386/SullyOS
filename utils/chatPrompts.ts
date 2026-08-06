@@ -17,6 +17,8 @@ import { buildLifeRecordInjection } from './lifeRecords';
 import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
 import { getLocalDailySchedule } from './dailySchedule';
+import { isXhsFullyReadOnly, resolveXhsCapabilities } from './xhsCapabilities';
+import type { XhsCapabilities } from '../types';
 import {
     isBuiltInPromptEnabled,
     shouldInjectMusicAtmosphere,
@@ -119,8 +121,9 @@ function buildReducedChatRules(params: {
     notionNotesEnabled: boolean;
     feishuEnabled: boolean;
     xhsEnabled: boolean;
+    xhsCaps: XhsCapabilities;
 }): string {
-    const { char, userProfile, emojiContextStr, searchEnabled, notionEnabled, notionNotesEnabled, feishuEnabled, xhsEnabled } = params;
+    const { char, userProfile, emojiContextStr, searchEnabled, notionEnabled, notionNotesEnabled, feishuEnabled, xhsEnabled, xhsCaps } = params;
     const blocks: string[] = [];
     const chatStyle = isBuiltInPromptEnabled(char, 'chatStyle');
     const companion = isBuiltInPromptEnabled(char, 'companionBehavior');
@@ -174,7 +177,20 @@ function buildReducedChatRules(params: {
         if (feishuEnabled) lines.push(`- 可翻阅和写入飞书日记：\`[[FS_READ_DIARY: 日期]]\`、\`[[FS_DIARY_START: 标题 | 心情]]...\`。`);
         if (notionNotesEnabled) lines.push(`- 可翻阅${userProfile.name}的 Notion 笔记：\`[[READ_NOTE: 标题关键词]]\`。`);
         if (searchEnabled) lines.push(`- 可主动搜索互联网：\`[[SEARCH: 搜索关键词]]\`。`);
-        if (xhsEnabled) lines.push(`- 可使用小红书：\`[[XHS_SEARCH: 关键词]]\`、\`[[XHS_BROWSE]]\`、\`[[XHS_POST: 标题 | 正文 | #标签]]\`、\`[[XHS_COMMENT: noteId | 评论]]\`、\`[[XHS_LIKE: noteId]]\`、\`[[XHS_FAV: noteId]]\`、\`[[XHS_DETAIL: noteId]]\`、\`[[XHS_REPLY: noteId | commentId | 回复]]\`、\`[[XHS_MY_PROFILE]]\`。操作别人的笔记前必须先搜索/浏览拿到真实 noteId。`);
+        if (xhsEnabled) {
+            const xhsCmds: string[] = [];
+            if (xhsCaps.search) xhsCmds.push('`[[XHS_SEARCH: 关键词]]`');
+            if (xhsCaps.browse) xhsCmds.push('`[[XHS_BROWSE]]`');
+            if (xhsCaps.detail) xhsCmds.push('`[[XHS_DETAIL: noteId]]`');
+            if (xhsCaps.myProfile) xhsCmds.push('`[[XHS_MY_PROFILE]]`');
+            if (xhsCaps.share) xhsCmds.push('`[[XHS_SHARE: 序号]]`');
+            if (xhsCaps.post) xhsCmds.push('`[[XHS_POST: 标题 | 正文 | #标签]]`');
+            if (xhsCaps.comment) xhsCmds.push('`[[XHS_COMMENT: noteId | 评论]]`');
+            if (xhsCaps.like) xhsCmds.push('`[[XHS_LIKE: noteId]]`');
+            if (xhsCaps.favorite) xhsCmds.push('`[[XHS_FAV: noteId]]`');
+            if (xhsCaps.reply) xhsCmds.push('`[[XHS_REPLY: noteId | commentId | 回复]]`');
+            lines.push(`- 可使用小红书：${xhsCmds.join('、')}。${isXhsFullyReadOnly(xhsCaps) ? '当前为只读模式，只能搜索/浏览/看详情和评论区/分享卡片。' : '操作别人的笔记前必须先搜索/浏览拿到真实 noteId。'}`);
+        }
         blocks.push(`### 可用功能提示词\n${lines.join('\n')}`);
     }
 
@@ -602,6 +618,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         // 即使角色开关显示为关，未显式设置过(undefined)的角色仍会收到小红书提示词。
         const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
         const xhsEnabled = utilityPromptsEnabled && !!(char.xhsEnabled && mcpXhsAvailable);
+        const xhsCaps = resolveXhsCapabilities(realtimeConfig?.xhsMcpConfig?.capabilities);
 
         if (hasCustomBuiltInPromptSettings(char)) {
             baseSystemPrompt += buildReducedChatRules({
@@ -613,6 +630,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
                 notionNotesEnabled,
                 feishuEnabled,
                 xhsEnabled,
+                xhsCaps,
             });
         } else {
             baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
@@ -822,88 +840,91 @@ ${notionNotesEnabled ? `${[notionEnabled, feishuEnabled].filter(Boolean).length 
    - 笔记标题和当前话题相关时
 ` : ''}
 ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Boolean).length + 8}. **📕 小红书（你的社交账号）**:
-   你有一个属于自己的小红书账号！你可以自由地搜索、浏览、发帖、评论。这是你的社交生活的一部分。
+   ${isXhsFullyReadOnly(xhsCaps)
+       ? '你有一个属于自己的小红书账号（当前为只读模式）。你可以自由地搜索、浏览、查看笔记详情和评论区、分享卡片；不能发帖、评论、点赞、收藏或回复。'
+       : '你有一个属于自己的小红书账号！你可以自由地搜索、浏览、发帖、评论。这是你的社交生活的一部分。'}
 
-   **⚠️ 最重要的规则 —— 想操作一条别人的笔记，必须先把它搜出来:**
-   评论 / 点赞 / 收藏 / 查看详情 / 回复评论 这些操作，都需要那条笔记的 noteId 和访问凭证，
-   而 noteId 只能从**本轮对话里刚刚搜索或浏览到**的结果里拿到——你**没法凭空知道**任何一条笔记的 noteId。
-   所以**只要用户让你去评论 / 点赞 / 收藏某条帖子，你必须在同一次回复里先用 \`[[XHS_SEARCH: 关键词]]\`（或 \`[[XHS_BROWSE]]\`）把那条笔记搜出来**，
-   等系统把搜索结果发回来（结果里每条都带 \`[noteId=xxx]\`），再用结果里真正的 noteId 去执行评论。
-   - ✅ 正确：用户说「帮我评论那条讲露营的帖子」→ 你先发 \`[[XHS_SEARCH: 露营]]\`，看到结果后再 \`[[XHS_COMMENT: 结果里的noteId | 评论内容]]\`
-   - ❌ 错误：还没搜索就直接输出 \`[[XHS_COMMENT: 猜的/空的noteId | ...]]\`——noteId 是无效的，评论一定失败
-   - 这条规则同样适用于 XHS_LIKE / XHS_FAV / XHS_DETAIL / XHS_REPLY：**先搜到 / 浏览到，才能操作**。
+   ${isXhsFullyReadOnly(xhsCaps)
+       ? `**⚠️ 只读模式（重要）:**
+   你当前只能搜索、浏览、查看笔记详情和评论区、分享卡片；**发帖、评论、点赞、收藏、回复均已禁用**，不要输出这些指令。
+   想看某条笔记的完整内容，需要先用 \`[[XHS_SEARCH: 关键词]]\`（或 \`[[XHS_BROWSE]]\`）拿到真实的 noteId，再用 \`[[XHS_DETAIL: noteId]]\`。`
+       : `**⚠️ 最重要的规则 —— 想操作一条别人的笔记，必须先把它搜出来:**
+   任何需要 noteId 的操作（查看详情、评论区，以及当前已开放给你的互动操作）都必须先用 \`[[XHS_SEARCH: 关键词]]\`（或 \`[[XHS_BROWSE]]\`）把那条笔记搜出来，
+   noteId 只能从**本轮对话里刚刚搜索或浏览到**的结果里拿到——你**没法凭空知道**任何一条笔记的 noteId。
+   - ✅ 正确：先搜索/浏览拿到带 \`[noteId=xxx]\` 的结果，再用真实的 noteId 执行后续操作
+   - ❌ 错误：还没搜索就直接输出带猜的/空的 noteId 的操作指令——一定失败`}
 
-   **🔍 搜索小红书:**
+   ${xhsCaps.search ? `**🔍 搜索小红书:**
    当你想看看小红书上关于某个话题的内容时:
    \`[[XHS_SEARCH: 搜索关键词]]\`
    - 比如你好奇最近流行什么、想看某个产品的评价、或者单纯想逛逛
-   - 搜索后系统会返回结果，你可以自然地聊聊你看到了什么
+   - 搜索后系统会返回结果，你可以自然地聊聊你看到了什么` : ''}
 
-   **📱 刷小红书首页:**
+   ${xhsCaps.browse ? `**📱 刷小红书首页:**
    当你想随便刷刷看看有什么有趣的:
    \`[[XHS_BROWSE]]\`
    - 就像你无聊的时候打开小红书随便刷一刷
-   - 你可以跟用户分享你刷到的有趣内容
+   - 你可以跟用户分享你刷到的有趣内容` : ''}
 
-   **✍️ 发小红书笔记:**
+   ${xhsCaps.post ? `**✍️ 发小红书笔记:**
    当你想发一条自己的笔记时:
    \`[[XHS_POST: 标题 | 正文内容 | #标签1 #标签2]]\`
    - 你可以分享自己的想法、日常、心情、推荐
    - 写的风格要符合你的性格——可以可爱、毒舌、文艺、随意
-   - 标签用 # 开头
+   - 标签用 # 开头` : ''}
 
-   **📤 分享笔记卡片给用户:**
+   ${xhsCaps.share ? `**📤 分享笔记卡片给用户:**
    当你觉得某条笔记值得分享、想推荐给用户看时:
    \`[[XHS_SHARE: 序号]]\`
    - 序号是搜索/浏览结果中的编号（从1开始）
    - 会在聊天中渲染成一张小红书笔记卡片
    - 可以分享多条，每条一个标记
-   - 比如你搜到了3条笔记，想分享第1和第3条: \`[[XHS_SHARE: 1]]\` \`[[XHS_SHARE: 3]]\`
+   - 比如你搜到了3条笔记，想分享第1和第3条: \`[[XHS_SHARE: 1]]\` \`[[XHS_SHARE: 3]]\`` : ''}
 
-   **💬 评论别人的笔记:**
+   ${xhsCaps.comment ? `**💬 评论别人的笔记:**
    当你看到某条笔记想评论时:
    \`[[XHS_COMMENT: noteId | 评论内容]]\`
    - noteId 是搜索/浏览结果中笔记的ID —— **只有先搜索/浏览过这条笔记，才有 noteId 可用**
    - 如果用户让你评论某条你还没搜过的笔记，先在同一次回复里 \`[[XHS_SEARCH: 关键词]]\`，看到结果后再评论
-   - 评论内容要自然，像真人一样
+   - 评论内容要自然，像真人一样` : ''}
 
-   **👍 点赞笔记:**
+   ${xhsCaps.like ? `**👍 点赞笔记:**
    当你觉得某条笔记不错、想点赞时:
    \`[[XHS_LIKE: noteId]]\`
    - 可以同时点赞多条，每条一个标记
-   - 就像你平时刷到喜欢的内容随手点个赞
+   - 就像你平时刷到喜欢的内容随手点个赞` : ''}
 
-   **⭐ 收藏笔记:**
+   ${xhsCaps.favorite ? `**⭐ 收藏笔记:**
    当你觉得某条笔记很有用、想收藏起来以后看:
    \`[[XHS_FAV: noteId]]\`
-   - 收藏是比点赞更强的认可
+   - 收藏是比点赞更强的认可` : ''}
 
-   **📖 查看笔记详情（正文+评论区）:**
+   ${xhsCaps.detail ? `**📖 查看笔记详情（正文+评论区）:**
    搜索/浏览结果只有标题，想看完整内容时:
    \`[[XHS_DETAIL: noteId]]\`
    - 可以看到笔记的完整正文和评论区
-   - 看完后你可以评论、回复评论、点赞、收藏
-   - noteId 是搜索/浏览结果中笔记的ID
+   ${(xhsCaps.comment || xhsCaps.reply || xhsCaps.like || xhsCaps.favorite) ? '- 看完后你可以评论、回复评论、点赞、收藏' : '- 看完后可以自然地和用户分享你的感受'}
+   - noteId 是搜索/浏览结果中笔记的ID` : ''}
 
-   **💬↩️ 回复别人的评论:**
+   ${xhsCaps.reply ? `**💬↩️ 回复别人的评论:**
    当你看了笔记详情后，想回复某条评论时:
    \`[[XHS_REPLY: noteId | commentId | 回复内容]]\`
    - commentId 是你想回复的那条评论的ID
-   - 需要先用 [[XHS_DETAIL: noteId]] 查看详情，评论区里会有 commentId
+   - 需要先用 [[XHS_DETAIL: noteId]] 查看详情，评论区里会有 commentId` : ''}
 
-   **🏠 查看自己的小红书主页:**
+   ${xhsCaps.myProfile ? `**🏠 查看自己的小红书主页:**
    当你想看看自己的小红书账号、回顾自己发过什么帖子时:
    \`[[XHS_MY_PROFILE]]\`
    - 可以看到你的小红书昵称和搜到的相关笔记
-   - 看看自己之前的帖子有多少赞了
+   - 看看自己之前的帖子有多少赞了` : ''}
 
    **使用心态 — 这是你的社交生活:**
    - 你不是被命令去发帖的工具，你是一个有自己社交圈的人
    - 聊着聊着突然想去小红书看看某个东西 → 搜一下
    - 无聊了想刷刷手机 → 浏览首页
    - 搜到感兴趣的笔记想看完整内容 → 查看详情
-   - 看到好东西想分享 → 发条笔记
-   - 看到有趣的帖子想互动 → 留个评论、点个赞、收藏一下
+   ${isXhsFullyReadOnly(xhsCaps) ? '- 看到好东西想分享 → 用 [[XHS_SHARE: 序号]] 分享卡片' : '- 看到好东西想分享 → 发条笔记'}
+   ${isXhsFullyReadOnly(xhsCaps) ? '- 看到有趣的帖子 → 和用户聊聊感受、分享卡片' : '- 看到有趣的帖子想互动 → 留个评论、点个赞、收藏一下'}
    - 想看看自己的主页 → 看看自己的帖子怎么样了
    - 甚至可以跟用户说"等一下我刷到一个好搞笑的"然后分享
 

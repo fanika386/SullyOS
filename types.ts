@@ -3401,6 +3401,22 @@ export interface XhsMcpConfig {
     loggedInUserId?: string;   // 登录用户的 user_id，连接测试成功后自动获取
     loggedInNickname?: string; // 登录用户的昵称
     userXsecToken?: string;    // 连接测试时从首页推荐自动提取的 xsec_token
+    /** 能力范围：缺省时按 DEFAULT_XHS_CAPABILITIES（只读类开、互动类关） */
+    capabilities?: XhsCapabilities;
+}
+
+/** 小红书能力范围（哪些指令对角色可用） */
+export interface XhsCapabilities {
+    search?: boolean;      // 搜索
+    browse?: boolean;      // 刷首页推荐
+    detail?: boolean;      // 查看笔记详情 + 评论区
+    myProfile?: boolean;   // 查看自己的主页
+    share?: boolean;       // 把笔记分享成卡片给用户
+    comment?: boolean;     // 评论别人的笔记
+    reply?: boolean;       // 回复评论
+    like?: boolean;        // 点赞
+    favorite?: boolean;    // 收藏
+    post?: boolean;        // 发小红书笔记
 }
 
 // ============================================================

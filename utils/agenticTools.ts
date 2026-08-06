@@ -18,6 +18,7 @@ import { CharacterProfile, UserProfile, Message, RealtimeConfig } from '../types
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from './xhsMcpClient';
 import { getLocalDateKey } from './localDate';
+import { resolveXhsCapabilities } from './xhsCapabilities';
 
 // ─── 共用类型 ────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,8 @@ export interface XhsConfig {
     loggedInUserId?: string;
     loggedInNickname?: string;
     userXsecToken?: string;
+    /** 能力范围（已合并默认值） */
+    capabilities: ReturnType<typeof resolveXhsCapabilities>;
 }
 
 export function resolveXhsConfig(char: CharacterProfile, realtimeConfig?: RealtimeConfig): XhsConfig {
@@ -50,7 +53,14 @@ export function resolveXhsConfig(char: CharacterProfile, realtimeConfig?: Realti
 
     // 必须由角色自己的开关显式打开（UI 默认关闭）；不回退到全局 realtimeConfig.xhsEnabled，
     // 与 chatPrompts.ts 的提示词注入门控保持一致。
-    return { enabled: !!char.xhsEnabled && mcpAvailable, mcpUrl, loggedInUserId, loggedInNickname, userXsecToken };
+    return {
+        enabled: !!char.xhsEnabled && mcpAvailable,
+        mcpUrl,
+        loggedInUserId,
+        loggedInNickname,
+        userXsecToken,
+        capabilities: resolveXhsCapabilities(mcpConfig?.capabilities),
+    };
 }
 
 export interface AgenticToolCtx {

@@ -12,6 +12,8 @@ import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, setLuckinEnabled as saveLuckinEnabled, testLuckinConnection, resetLuckinSession } from '../utils/luckinMcpClient';
 import { getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER, rewriteXhsLiteServerUrl } from '../utils/proxyWorker';
+import { resolveXhsCapabilities } from '../utils/xhsCapabilities';
+import type { XhsCapabilities } from '../types';
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
 import { DATE_VOICE_GUIDE } from '../utils/datePrompts';
@@ -50,6 +52,19 @@ const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
     { key: 'xueqiu', label: '雪球' },
     { key: 'cls', label: '财联社' },
     { key: 'tenxunwang', label: '腾讯网' },
+];
+
+const XHS_CAPABILITY_ITEMS: { key: keyof XhsCapabilities; label: string; desc: string }[] = [
+    { key: 'search', label: '搜索', desc: '按关键词搜索小红书内容' },
+    { key: 'browse', label: '浏览首页', desc: '刷小红书首页推荐' },
+    { key: 'detail', label: '查看详情和评论区', desc: '打开笔记看正文和评论区' },
+    { key: 'myProfile', label: '查看自己主页', desc: '看自己的小红书主页' },
+    { key: 'share', label: '分享笔记卡片', desc: '把笔记分享成聊天卡片' },
+    { key: 'comment', label: '评论', desc: '在别人的笔记下评论' },
+    { key: 'reply', label: '回复评论', desc: '回复笔记下的评论' },
+    { key: 'like', label: '点赞', desc: '给笔记点赞' },
+    { key: 'favorite', label: '收藏', desc: '收藏笔记' },
+    { key: 'post', label: '发帖', desc: '发布小红书笔记' },
 ];
 
 // 「主动消息 Push 加速」面板入口开关。底层逻辑（心跳、订阅、诊断）全部保留，
@@ -464,6 +479,7 @@ const Settings: React.FC = () => {
   const [rtXhsMcpEnabled, setRtXhsMcpEnabled] = useState(realtimeConfig.xhsMcpConfig?.enabled || false);
   const [rtXhsMode, setRtXhsMode] = useState<'lite' | 'local'>(_xhsIsLocal ? 'local' : 'lite');
   const [rtXhsLocalUrl, setRtXhsLocalUrl] = useState(_xhsIsLocal ? _xhsCfgUrl : 'http://localhost:18060/mcp');
+  const [rtXhsCaps, setRtXhsCaps] = useState<XhsCapabilities>(() => resolveXhsCapabilities(realtimeConfig.xhsMcpConfig?.capabilities));
   const [rtXhsNickname, setRtXhsNickname] = useState(realtimeConfig.xhsMcpConfig?.loggedInNickname || '');
   const [rtXhsUserId, setRtXhsUserId] = useState(realtimeConfig.xhsMcpConfig?.loggedInUserId || '');
   const [rtXhsCookie, setRtXhsCookie] = useState(realtimeConfig.xhsMcpConfig?.cookie || '');
@@ -1106,6 +1122,7 @@ const Settings: React.FC = () => {
               enabled: rtXhsMcpEnabled,
               serverUrl: rtXhsMode === 'lite' ? XHS_LITE_URL : rtXhsLocalUrl,
               cookie: rtXhsMode === 'lite' ? (rtXhsCookie.trim() || undefined) : undefined,
+              capabilities: rtXhsCaps,
               loggedInNickname: rtXhsNickname || undefined,
               loggedInUserId: rtXhsUserId || undefined,
               userXsecToken: realtimeConfig.xhsMcpConfig?.userXsecToken, // 保留自动获取的 token
@@ -1194,6 +1211,7 @@ const Settings: React.FC = () => {
                       enabled: rtXhsMcpEnabled,
                       serverUrl: urlToUse,
                       cookie: cookieToUse,
+                      capabilities: resolveXhsCapabilities(realtimeConfig.xhsMcpConfig?.capabilities),
                       loggedInNickname: rtXhsNickname || result.nickname,
                       loggedInUserId: rtXhsUserId || result.userId,
                       userXsecToken: result.xsecToken,
@@ -2960,7 +2978,7 @@ const Settings: React.FC = () => {
                       </label>
                   </div>
                   <p className="text-[10px] text-rose-500/70 leading-relaxed">
-                      免电脑、免扫码：粘贴一次小红书 cookie，即可搜索/浏览/详情/点赞/收藏/评论/发帖(带图)。地址已内置，无需填写。
+                      免电脑、免扫码：粘贴一次小红书 cookie，即可搜索/浏览/详情/评论区（只读开关默认开启，可随时关闭互动）。地址已内置，无需填写。
                   </p>
                   <p className="text-[10px] text-amber-700 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">{XHS_RISK_TEXT}</p>
                   {rtXhsMcpEnabled && rtXhsMode === 'lite' && (
@@ -2995,6 +3013,35 @@ const Settings: React.FC = () => {
                       </div>
                   )}
               </div>
+
+              {/* 小红书能力范围（全局，实时生效） */}
+              {rtXhsMcpEnabled && (
+                  <div className="bg-white/70 border border-rose-100 rounded-2xl p-4 space-y-3">
+                      <div className="text-xs font-bold text-slate-600">小红书能力范围</div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                          控制角色能用小红书做什么。默认只开“看”的能力（搜索/浏览/详情/主页/分享卡片），互动类（评论/回复/点赞/收藏/发帖）默认关闭，按需打开。修改后保存即实时生效，对所有角色统一生效。
+                      </p>
+                      <div className="grid grid-cols-1 gap-2">
+                          {XHS_CAPABILITY_ITEMS.map(item => (
+                              <div key={item.key} className="flex items-center justify-between rounded-xl bg-slate-50/80 border border-slate-200 px-3 py-2">
+                                  <div>
+                                      <div className="text-[11px] font-bold text-slate-600">{item.label}</div>
+                                      <div className="text-[9px] text-slate-400">{item.desc}</div>
+                                  </div>
+                                  <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
+                                      <input
+                                          type="checkbox"
+                                          checked={!!rtXhsCaps[item.key]}
+                                          onChange={e => setRtXhsCaps(prev => ({ ...prev, [item.key]: e.target.checked }))}
+                                          className="sr-only peer"
+                                      />
+                                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+                                  </label>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              )}
 
               {/* 麦当劳 MCP */}
               <div className="bg-yellow-50/60 p-4 rounded-2xl space-y-3">

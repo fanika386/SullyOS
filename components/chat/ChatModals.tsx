@@ -472,7 +472,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                              </div>
                          </div>
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后，角色在聊天中可以搜索、浏览、发帖、评论小红书。需要在全局设置中配置 MCP 或 Cookie。
+                             开启后，角色在聊天中可以搜索、浏览、查看详情和评论区（是否可发帖/评论/点赞取决于全局设置中的只读开关）。需要在全局设置中配置 MCP 或 Cookie。
                          </p>
                      </div>
 

@@ -22,6 +22,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
 import { DEFAULT_PROXY_WORKER, getProxyWorkerUrl, rewriteStaleWorkerUrl, rewriteXhsLiteServerUrl } from '../utils/proxyWorker';
+import { DEFAULT_XHS_CAPABILITIES } from '../utils/xhsCapabilities';
 import { buildUserProfileBackupFields, DEFAULT_USER_PROFILE_ID, getDefaultUserProfile, normalizeUserProfiles, resolveUserProfileForCharacter as resolveUserProfileForCharacterFromList, withUserProfileId } from '../utils/userProfiles';
 import { INSTALLED_APPS } from '../constants';
 import { markBackupDone } from '../utils/backupReminder';
@@ -196,6 +197,7 @@ const defaultRealtimeConfig: RealtimeConfig = {
   feishuBaseId: '',
   feishuTableId: '',
   xhsEnabled: false,
+  xhsMcpConfig: { enabled: false, serverUrl: `${getProxyWorkerUrl()}/api`, cookie: undefined, loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined, capabilities: { ...DEFAULT_XHS_CAPABILITIES } },
   cacheMinutes: 30
 };
 

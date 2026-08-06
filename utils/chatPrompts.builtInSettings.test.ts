@@ -98,4 +98,77 @@ describe('ChatPrompts built-in prompt switches', () => {
         expect(combined).not.toContain('夜曲');
         expect(combined).toContain('你是小角色。保留这段核心人设。');
     });
+
+    it('小红书默认只读：只暴露搜索/浏览/详情/主页/分享，不暴露写操作指令', async () => {
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            { ...baseChar, xhsEnabled: true },
+            userProfile, [], [], [], history,
+            {
+                xhsEnabled: true,
+                xhsMcpConfig: {
+                    enabled: true,
+                    serverUrl: 'https://sullyos-main-proxy.leonanice36.workers.dev/api',
+                    capabilities: {},
+                },
+                cacheMinutes: 30,
+            } as any,
+        );
+        const combined = parts.stable + parts.volatileState + parts.recencyTail;
+
+        expect(combined).toContain('[[XHS_SEARCH:');
+        expect(combined).toContain('[[XHS_BROWSE]]');
+        expect(combined).toContain('[[XHS_DETAIL:');
+        expect(combined).toContain('[[XHS_MY_PROFILE]]');
+        expect(combined).not.toContain('[[XHS_POST:');
+        expect(combined).not.toContain('[[XHS_COMMENT:');
+        expect(combined).not.toContain('[[XHS_LIKE:');
+        expect(combined).not.toContain('[[XHS_FAV:');
+        expect(combined).not.toContain('[[XHS_REPLY:');
+    });
+
+    it('小红书打开互动能力：写操作指令恢复暴露', async () => {
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            { ...baseChar, xhsEnabled: true },
+            userProfile, [], [], [], history,
+            {
+                xhsEnabled: true,
+                xhsMcpConfig: {
+                    enabled: true,
+                    serverUrl: 'https://sullyos-main-proxy.leonanice36.workers.dev/api',
+                    capabilities: { comment: true, reply: true, like: true, favorite: true, post: true },
+                },
+                cacheMinutes: 30,
+            } as any,
+        );
+        const combined = parts.stable + parts.volatileState + parts.recencyTail;
+
+        expect(combined).toContain('[[XHS_POST:');
+        expect(combined).toContain('[[XHS_COMMENT:');
+        expect(combined).toContain('[[XHS_LIKE:');
+        expect(combined).toContain('[[XHS_FAV:');
+        expect(combined).toContain('[[XHS_REPLY:');
+    });
+
+    it('小红书只开点赞：只暴露 XHS_LIKE，不暴露其他写操作', async () => {
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            { ...baseChar, xhsEnabled: true },
+            userProfile, [], [], [], history,
+            {
+                xhsEnabled: true,
+                xhsMcpConfig: {
+                    enabled: true,
+                    serverUrl: 'https://sullyos-main-proxy.leonanice36.workers.dev/api',
+                    capabilities: { like: true },
+                },
+                cacheMinutes: 30,
+            } as any,
+        );
+        const combined = parts.stable + parts.volatileState + parts.recencyTail;
+
+        expect(combined).toContain('[[XHS_LIKE:');
+        expect(combined).not.toContain('[[XHS_POST:');
+        expect(combined).not.toContain('[[XHS_COMMENT:');
+        expect(combined).not.toContain('[[XHS_REPLY:');
+        expect(combined).not.toContain('[[XHS_FAV:');
+    });
 });

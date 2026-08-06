@@ -1182,10 +1182,11 @@ export async function applyAssistantPostProcessing(
 
     // 5.10 Handle XHS (小红书) Actions
     const xhsConf = resolveXhsConfig(char, realtimeConfig);
+    const xhsCaps = xhsConf.capabilities;
 
     // [[XHS_SEARCH: 关键词]]
     const xhsSearchMatch = aiContent.match(/\[\[XHS_SEARCH:\s*(.+?)\]\]/);
-    if (!skipSecondPassLLM && xhsSearchMatch && xhsConf.enabled) {
+    if (!skipSecondPassLLM && xhsSearchMatch && xhsConf.enabled && xhsCaps.search) {
         const keyword = xhsSearchMatch[1].trim();
         console.log(`📕 [XHS] AI想搜索小红书:`, keyword);
         setXhsStatus(`正在小红书搜索: ${keyword}...`);
@@ -1197,7 +1198,7 @@ export async function applyAssistantPostProcessing(
                 const xhsMessages = [
                     ...fullMessages,
                     { role: 'assistant', content: cleanedForXhs },
-                    { role: 'user', content: `[系统: 你在小红书搜索了"${keyword}"，以下是搜索结果]\n\n${xsr.notesText}\n\n[系统: 你已经看完了搜索结果（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 自然地分享你看到的内容，比如"我刚在小红书搜了一下..."、"诶小红书上有人说..."\n2. 可以评价、吐槽、分享感兴趣的内容\n3. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条\n4. 如果想评论某条笔记，可以用 [[XHS_COMMENT: noteId | 评论内容]]\n5. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏\n6. 如果想看某条笔记的完整内容和评论区，可以用 [[XHS_DETAIL: noteId]]\n7. 严禁再输出[[XHS_SEARCH:...]]标记]` }
+                    { role: 'user', content: `[系统: 你在小红书搜索了"${keyword}"，以下是搜索结果]\n\n${xsr.notesText}\n\n[系统: 你已经看完了搜索结果（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 自然地分享你看到的内容，比如"我刚在小红书搜了一下..."、"诶小红书上有人说..."\n2. 可以评价、吐槽、分享感兴趣的内容\n3. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条${xhsCaps.comment ? '\n4. 如果想评论某条笔记，可以用 [[XHS_COMMENT: noteId | 评论内容]]' : ''}${(xhsCaps.like || xhsCaps.favorite) ? '\n5. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏' : ''}\n6. 如果想看某条笔记的完整内容和评论区，可以用 [[XHS_DETAIL: noteId]]\n7. 严禁再输出[[XHS_SEARCH:...]]标记]` }
                 ];
 
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1231,7 +1232,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_BROWSE]] or [[XHS_BROWSE: 分类]]
     const xhsBrowseMatch = aiContent.match(/\[\[XHS_BROWSE(?::\s*(.+?))?\]\]/);
-    if (!skipSecondPassLLM && xhsBrowseMatch && xhsConf.enabled) {
+    if (!skipSecondPassLLM && xhsBrowseMatch && xhsConf.enabled && xhsCaps.browse) {
         const category = xhsBrowseMatch[1]?.trim();
         console.log(`📕 [XHS] AI想刷小红书:`, category || '首页推荐');
         setXhsStatus('正在刷小红书...');
@@ -1243,7 +1244,7 @@ export async function applyAssistantPostProcessing(
                 const xhsMessages = [
                     ...fullMessages,
                     { role: 'assistant', content: cleanedForXhs },
-                    { role: 'user', content: `[系统: 你刷了一会儿小红书首页，以下是你看到的内容]\n\n${xbr.notesText}\n\n[系统: 你已经看完了（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 像在跟朋友分享一样，随意聊聊你看到了什么有趣的\n2. 不用全部都提，挑你感兴趣的1-3条聊就行\n3. 可以吐槽、感叹、分享想法\n4. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条\n5. 如果想发一条自己的笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]\n6. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏\n7. 如果想看某条笔记的完整内容和评论区，可以用 [[XHS_DETAIL: noteId]]\n8. 严禁再输出[[XHS_BROWSE]]标记]` }
+                    { role: 'user', content: `[系统: 你刷了一会儿小红书首页，以下是你看到的内容]\n\n${xbr.notesText}\n\n[系统: 你已经看完了（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 像在跟朋友分享一样，随意聊聊你看到了什么有趣的\n2. 不用全部都提，挑你感兴趣的1-3条聊就行\n3. 可以吐槽、感叹、分享想法\n4. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条${xhsCaps.post ? '\n5. 如果想发一条自己的笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]' : ''}${(xhsCaps.like || xhsCaps.favorite) ? '\n6. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏' : ''}\n7. 如果想看某条笔记的完整内容和评论区，可以用 [[XHS_DETAIL: noteId]]\n8. 严禁再输出[[XHS_BROWSE]]标记]` }
                 ];
 
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1269,7 +1270,7 @@ export async function applyAssistantPostProcessing(
     aiContent = aiContent.replace(/\[\[XHS_BROWSE(?::.*?)?\]\]/g, '').trim();
 
     // [[XHS_SHARE: 序号]]
-    const xhsShareMatches: Iterable<RegExpMatchArray> = disabledXhsSideEffects ? [] : aiContent.matchAll(/\[\[XHS_SHARE:\s*(\d+)\]\]/g);
+    const xhsShareMatches: Iterable<RegExpMatchArray> = (disabledXhsSideEffects || !xhsCaps.share) ? [] : aiContent.matchAll(/\[\[XHS_SHARE:\s*(\d+)\]\]/g);
     for (const shareMatch of xhsShareMatches) {
         const idx = parseInt(shareMatch[1]) - 1;
         if (idx >= 0 && idx < lastXhsNotesRef.current.length) {
@@ -1293,7 +1294,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]
     const xhsPostMatch = aiContent.match(/\[\[XHS_POST:\s*(.+?)\]\]/s);
-    if (!disabledXhsSideEffects && xhsPostMatch && xhsConf.enabled) {
+    if (!disabledXhsSideEffects && xhsCaps.post && xhsPostMatch && xhsConf.enabled) {
         const postRaw = xhsPostMatch[1].trim();
         const parts = postRaw.split('|').map(p => p.trim());
         const postTitle = parts[0] || '';
@@ -1331,7 +1332,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_COMMENT: noteId | 评论内容]]
     const xhsCommentMatch = aiContent.match(/\[\[XHS_COMMENT:\s*(.+?)\]\]/);
-    if (!disabledXhsSideEffects && xhsCommentMatch && xhsConf.enabled) {
+    if (!disabledXhsSideEffects && xhsCaps.comment && xhsCommentMatch && xhsConf.enabled) {
         const commentRaw = xhsCommentMatch[1].trim();
         const sepIdx = commentRaw.indexOf('|');
         if (sepIdx > 0) {
@@ -1367,7 +1368,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_REPLY: noteId | commentId | 回复内容]] (first pass; before LIKE/FAV)
     const xhsReplyMatch = aiContent.match(/\[\[XHS_REPLY:\s*(.+?)\]\]/);
-    if (!disabledXhsSideEffects && xhsReplyMatch && xhsConf.enabled) {
+    if (!disabledXhsSideEffects && xhsCaps.reply && xhsReplyMatch && xhsConf.enabled) {
         const parts = xhsReplyMatch[1].split('|').map(s => s.trim());
         if (parts.length >= 3) {
             const [noteId, commentId, ...replyParts] = parts;
@@ -1428,7 +1429,7 @@ export async function applyAssistantPostProcessing(
     aiContent = aiContent.replace(/\[\[XHS_REPLY:.*?\]\]/g, '').trim();
 
     // [[XHS_LIKE: noteId]]
-    const xhsLikeMatches: Iterable<RegExpMatchArray> = disabledXhsSideEffects ? [] : aiContent.matchAll(/\[\[XHS_LIKE:\s*(.+?)\]\]/g);
+    const xhsLikeMatches: Iterable<RegExpMatchArray> = (disabledXhsSideEffects || !xhsCaps.like) ? [] : aiContent.matchAll(/\[\[XHS_LIKE:\s*(.+?)\]\]/g);
     for (const xhsLikeMatch of xhsLikeMatches) {
         if (xhsConf.enabled) {
             const noteId = xhsLikeMatch[1].trim();
@@ -1447,7 +1448,7 @@ export async function applyAssistantPostProcessing(
     aiContent = aiContent.replace(/\[\[XHS_LIKE:.*?\]\]/g, '').trim();
 
     // [[XHS_FAV: noteId]]
-    const xhsFavMatches: Iterable<RegExpMatchArray> = disabledXhsSideEffects ? [] : aiContent.matchAll(/\[\[XHS_FAV:\s*(.+?)\]\]/g);
+    const xhsFavMatches: Iterable<RegExpMatchArray> = (disabledXhsSideEffects || !xhsCaps.favorite) ? [] : aiContent.matchAll(/\[\[XHS_FAV:\s*(.+?)\]\]/g);
     for (const xhsFavMatch of xhsFavMatches) {
         if (xhsConf.enabled) {
             const noteId = xhsFavMatch[1].trim();
@@ -1467,7 +1468,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_MY_PROFILE]]
     const xhsProfileMatch = aiContent.match(/\[\[XHS_MY_PROFILE\]\]/);
-    if (!skipSecondPassLLM && xhsProfileMatch && xhsConf.enabled) {
+    if (!skipSecondPassLLM && xhsProfileMatch && xhsConf.enabled && xhsCaps.myProfile) {
         console.log(`📕 [XHS] AI要查看自己的主页`);
         setXhsStatus('正在查看小红书主页...');
 
@@ -1485,7 +1486,7 @@ export async function applyAssistantPostProcessing(
                 const xhsMessages = [
                     ...fullMessages,
                     { role: 'assistant', content: cleanedForXhs },
-                    { role: 'user', content: `[系统: 你打开了自己的小红书]\n\n你的小红书账号昵称: ${nickname || '未知'}${userId ? ` (userId: ${userId})` : ''}${profileSection}\n\n${gotProfile ? '你的笔记' : `搜索「${nickname}」找到的相关笔记`}:\n${feedsStr}\n\n[系统: ${gotProfile ? '以上是你的主页数据。' : '注意，搜索结果可能包含别人的帖子，你需要辨别哪些是你自己发的（看作者名字）。'}现在请你：\n1. 自然地聊聊你看到了什么，"我看了看我的小红书..."、"我之前发的那个帖子..."\n2. 如果想发新笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]\n3. 如果想看某条笔记的详细内容，可以用 [[XHS_DETAIL: noteId]]\n4. 严禁再输出[[XHS_MY_PROFILE]]标记]` }
+                    { role: 'user', content: `[系统: 你打开了自己的小红书]\n\n你的小红书账号昵称: ${nickname || '未知'}${userId ? ` (userId: ${userId})` : ''}${profileSection}\n\n${gotProfile ? '你的笔记' : `搜索「${nickname}」找到的相关笔记`}:\n${feedsStr}\n\n[系统: ${gotProfile ? '以上是你的主页数据。' : '注意，搜索结果可能包含别人的帖子，你需要辨别哪些是你自己发的（看作者名字）。'}现在请你：\n1. 自然地聊聊你看到了什么，"我看了看我的小红书..."、"我之前发的那个帖子..."${xhsCaps.post ? '\n2. 如果想发新笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]' : ''}\n3. 如果想看某条笔记的详细内容，可以用 [[XHS_DETAIL: noteId]]\n4. 严禁再输出[[XHS_MY_PROFILE]]标记]` }
                 ];
 
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1504,7 +1505,7 @@ export async function applyAssistantPostProcessing(
                 const xhsMessages = [
                     ...fullMessages,
                     { role: 'assistant', content: cleanedForXhs },
-                    { role: 'user', content: `[系统: 你打开了自己的小红书]\n\n你的小红书账号昵称: 未知${profileSection}\n\n搜索「」找到的相关笔记:\n（无法获取主页：请在设置-小红书中填写你的昵称或用户ID）\n\n[系统: 注意，搜索结果可能包含别人的帖子，你需要辨别哪些是你自己发的（看作者名字）。现在请你：\n1. 自然地聊聊你看到了什么，"我看了看我的小红书..."、"我之前发的那个帖子..."\n2. 如果想发新笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]\n3. 如果想看某条笔记的详细内容，可以用 [[XHS_DETAIL: noteId]]\n4. 严禁再输出[[XHS_MY_PROFILE]]标记]` }
+                    { role: 'user', content: `[系统: 你打开了自己的小红书]\n\n你的小红书账号昵称: 未知${profileSection}\n\n搜索「」找到的相关笔记:\n（无法获取主页：请在设置-小红书中填写你的昵称或用户ID）\n\n[系统: 注意，搜索结果可能包含别人的帖子，你需要辨别哪些是你自己发的（看作者名字）。现在请你：\n1. 自然地聊聊你看到了什么，"我看了看我的小红书..."、"我之前发的那个帖子..."${xhsCaps.post ? '\n2. 如果想发新笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]' : ''}\n3. 如果想看某条笔记的详细内容，可以用 [[XHS_DETAIL: noteId]]\n4. 严禁再输出[[XHS_MY_PROFILE]]标记]` }
                 ];
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                     method: 'POST', headers,
@@ -1527,7 +1528,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_DETAIL: noteId]]
     const xhsDetailMatch = aiContent.match(/\[\[XHS_DETAIL:\s*(.+?)\]\]/);
-    if (!skipSecondPassLLM && xhsDetailMatch && xhsConf.enabled) {
+    if (!skipSecondPassLLM && xhsDetailMatch && xhsConf.enabled && xhsCaps.detail) {
         const noteId = xhsDetailMatch[1].trim();
         setXhsStatus('正在查看笔记详情...');
 
@@ -1549,7 +1550,7 @@ export async function applyAssistantPostProcessing(
                 { role: 'assistant', content: cleanedForXhs },
                 { role: 'user', content: detailFailed
                     ? `[系统: 你尝试打开一条小红书笔记（noteId=${noteId}），但加载失败了]\n\n${detailStr}\n\n[系统: 笔记详情页加载失败了。可能的原因：这条笔记需要先通过搜索或浏览才能打开详情。现在请你：\n1. 自然地告知用户"这条笔记打不开/加载不出来"\n2. 可以建议搜索相关关键词再试: [[XHS_SEARCH: 关键词]]\n3. 严禁再输出[[XHS_DETAIL:...]]标记]`
-                    : `[系统: 你点开了一条小红书笔记的详情页（noteId=${noteId}）]\n\n${detailStr}\n\n[系统: 你已经看完了这条笔记的完整内容和评论区。现在请你：\n1. 自然地分享你看到的内容和感受\n2. 如果想评论这条笔记，可以用 [[XHS_COMMENT: ${noteId} | 评论内容]]\n3. 如果想回复某条评论，可以用 [[XHS_REPLY: ${noteId} | commentId | 回复内容]]（commentId 在上面的评论区数据里）\n4. 如果想点赞，可以用 [[XHS_LIKE: ${noteId}]]；想收藏可以用 [[XHS_FAV: ${noteId}]]\n5. 严禁再输出[[XHS_DETAIL:...]]标记]` }
+                    : `[系统: 你点开了一条小红书笔记的详情页（noteId=${noteId}）]\n\n${detailStr}\n\n[系统: 你已经看完了这条笔记的完整内容和评论区。现在请你：\n1. 自然地分享你看到的内容和感受${(xhsCaps.comment || xhsCaps.reply || xhsCaps.like || xhsCaps.favorite) ? `${xhsCaps.comment ? `\n2. 如果想评论这条笔记，可以用 [[XHS_COMMENT: ${noteId} | 评论内容]]` : ''}${xhsCaps.reply ? `\n3. 如果想回复某条评论，可以用 [[XHS_REPLY: ${noteId} | commentId | 回复内容]]（commentId 在上面的评论区数据里）` : ''}${(xhsCaps.like || xhsCaps.favorite) ? `\n4. 如果想点赞，可以用 [[XHS_LIKE: ${noteId}]]；想收藏可以用 [[XHS_FAV: ${noteId}]]` : ''}` : '\n2. 看完后可以自然地和用户分享你的感受（当前未开放评论/回复/点赞/收藏）'}\n5. 严禁再输出[[XHS_DETAIL:...]]标记]` }
             ];
 
             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1574,7 +1575,7 @@ export async function applyAssistantPostProcessing(
     // 5.10.1 Second-round XHS action processing
     // [[XHS_COMMENT: noteId | 评论内容]] (second round)
     const xhsCommentMatch2 = aiContent.match(/\[\[XHS_COMMENT:\s*(.+?)\]\]/);
-    if (!disabledXhsSideEffects && xhsCommentMatch2 && xhsConf.enabled) {
+    if (!disabledXhsSideEffects && xhsCaps.comment && xhsCommentMatch2 && xhsConf.enabled) {
         const commentRaw = xhsCommentMatch2[1].trim();
         const sepIdx = commentRaw.indexOf('|');
         if (sepIdx > 0) {
@@ -1606,7 +1607,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_REPLY]] (second round)
     const xhsReplyMatch2 = aiContent.match(/\[\[XHS_REPLY:\s*(.+?)\]\]/);
-    if (!disabledXhsSideEffects && xhsReplyMatch2 && xhsConf.enabled) {
+    if (!disabledXhsSideEffects && xhsCaps.reply && xhsReplyMatch2 && xhsConf.enabled) {
         const parts = xhsReplyMatch2[1].split('|').map(s => s.trim());
         if (parts.length >= 3) {
             const [noteId, commentId, ...replyParts] = parts;
@@ -1664,7 +1665,7 @@ export async function applyAssistantPostProcessing(
     aiContent = aiContent.replace(/\[\[XHS_REPLY:.*?\]\]/g, '').trim();
 
     // [[XHS_LIKE]] (second round)
-    const xhsLikeMatches2: Iterable<RegExpMatchArray> = disabledXhsSideEffects ? [] : aiContent.matchAll(/\[\[XHS_LIKE:\s*(.+?)\]\]/g);
+    const xhsLikeMatches2: Iterable<RegExpMatchArray> = (disabledXhsSideEffects || !xhsCaps.like) ? [] : aiContent.matchAll(/\[\[XHS_LIKE:\s*(.+?)\]\]/g);
     for (const xhsLikeMatch of xhsLikeMatches2) {
         if (xhsConf.enabled) {
             const noteId = xhsLikeMatch[1].trim();
@@ -1683,7 +1684,7 @@ export async function applyAssistantPostProcessing(
     aiContent = aiContent.replace(/\[\[XHS_LIKE:.*?\]\]/g, '').trim();
 
     // [[XHS_FAV]] (second round)
-    const xhsFavMatches2: Iterable<RegExpMatchArray> = disabledXhsSideEffects ? [] : aiContent.matchAll(/\[\[XHS_FAV:\s*(.+?)\]\]/g);
+    const xhsFavMatches2: Iterable<RegExpMatchArray> = (disabledXhsSideEffects || !xhsCaps.favorite) ? [] : aiContent.matchAll(/\[\[XHS_FAV:\s*(.+?)\]\]/g);
     for (const xhsFavMatch of xhsFavMatches2) {
         if (xhsConf.enabled) {
             const noteId = xhsFavMatch[1].trim();
@@ -1703,7 +1704,7 @@ export async function applyAssistantPostProcessing(
 
     // [[XHS_POST]] (second round - after MY_PROFILE)
     const xhsPostMatch2 = aiContent.match(/\[\[XHS_POST:\s*(.+?)\]\]/s);
-    if (!disabledXhsSideEffects && xhsPostMatch2 && xhsConf.enabled) {
+    if (!disabledXhsSideEffects && xhsCaps.post && xhsPostMatch2 && xhsConf.enabled) {
         const postRaw = xhsPostMatch2[1].trim();
         const parts = postRaw.split('|').map(p => p.trim());
         const postTitle = parts[0] || '';
