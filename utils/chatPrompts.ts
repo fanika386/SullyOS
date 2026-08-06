@@ -4,19 +4,20 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
+import { formatTransferRecord } from './transferFormat';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
-import { isScheduleFeatureOn } from './scheduleGenerator';
+import { isScheduleFeatureOn } from './scheduleFeature';
 import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { buildLifeRecordInjection } from './lifeRecords';
+import { isWorkerReachableUrl } from './amsgToolPack';
 import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
-import { getLocalDailySchedule } from './dailySchedule';
 import { isXhsFullyReadOnly, resolveXhsCapabilities } from './xhsCapabilities';
 import type { XhsCapabilities } from '../types';
 import {
@@ -26,6 +27,8 @@ import {
     shouldInjectTimeAwareness,
     shouldInjectUtilityPrompts,
 } from './builtInPromptSettings';
+import { getDailyScheduleForChar } from './dailySchedule';
+import { formatRelativeAge } from './groupChat/relativeTime';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -52,6 +55,9 @@ function summarizeGroupMsgContent(m: Message): string {
         case 'image': return '[图片]';
         case 'emoji': return '[表情]';
         case 'interaction': return '[戳了戳]';
+        // 转账保持轻占位符, 不迁 [[记录:TRANSFER]] —— 这里是别人对话的背景叙述, 整片都是
+        // [图片]/[表情] 式短占位, 混重型 tag 破坏局部一致; 对它的模仿 transferFormat 的
+        // BARE_TRANSFER_RE 兜得住。
         case 'transfer': return `[转账${meta.amount ?? ''}]`;
         case 'social_card': return `[分享帖子${meta.post?.title ? '：' + meta.post.title : ''}]`;
         case 'chat_forward': return '[转发的聊天记录]';
@@ -197,6 +203,27 @@ function buildReducedChatRules(params: {
     return blocks.length ? `\n${blocks.join('\n\n')}\n` : '';
 }
 
+/**
+ * buildSystemPrompt / buildSystemPromptParts 的构建选项。
+ *
+ * `forFirePack` = 这份 prompt 是给主动消息打包的：模板在最后一次聊天时打好，到点才渲染。
+ * 「打包这一刻」的状态到触发时早就过期了，所以下面这些块一律不烤进去——
+ *
+ * | 块 | 不烤的原因 | 到点谁来补 |
+ * |---|---|---|
+ * | 「现在是 X」时间块 | 打包时刻的钟，到点已过期 | worker 填 AMSG_SLOT_CURRENT_TIME |
+ * | 【真实世界感知系统】（今日节日 / 天气 / 热搜） | 全是打包那天那一刻的，跨天说错节日、大晴天叫人带伞、同一批旧闻反复当「最近真实发生」 | worker 填 AMSG_SLOT_REALTIME_WORLD（到点自己去拉一次） |
+ * | 日程当前时段 + 此刻在听的歌 | 3am 触发会说「我在健身房呢」 | worker 填 AMSG_SLOT_SCENE（随包带整天作息表现算） |
+ * | 「你刚刚和对方结束了一通电话 / 见面」 | 打包时刚挂电话，到点可能是第二天凌晨 | 不补 |
+ * | 「用户此刻也在《彼方》里」 | 说的是用户当下挂在哪个房间，人下线几小时后角色还在说「看你小人挂在听歌房」 | 不补（worker 够不着用户此刻的彼方状态） |
+ * | 群聊背景的「约 X 分钟前」 | 打包时的「刚才」到点变成昨天 | 保留绝对时间戳 |
+ * | 生活记录的代记工具说明 | 后台没有用户新说的话，记下来的一定是重复或臆造 | 不补（摘要数据仍保留） |
+ * | `[schedule_message]` 教学 | 排的是浏览器里的本地定时消息，App 关着没人派发 | worker 追加自己的排程工具说明 |
+ */
+export interface PromptBuildOptions {
+    forFirePack?: boolean;
+}
+
 export const ChatPrompts = {
     // 格式化时间戳（tz 非空时按该时区折算墙上时间，用于自定义时区角色）
     formatDate: (ts: number, tz?: string) => {
@@ -285,10 +312,12 @@ export const ChatPrompts = {
         } | null,
         isListeningTogether?: boolean,
         musicCfg?: MusicCfg,
+        promptOptions?: PromptBuildOptions,
     ): Promise<string> => {
         const parts = await ChatPrompts.buildSystemPromptParts(
             char, userProfile, groups, emojis, categories, currentMsgs,
             realtimeConfig, evolvedNarrative, userListeningContext, isListeningTogether, musicCfg,
+            undefined, promptOptions,
         );
         return parts.stable + parts.volatileState + parts.recencyTail;
     },
@@ -328,7 +357,11 @@ export const ChatPrompts = {
         musicCfg?: MusicCfg,
         // 刚才一起听途中歌被切了（char 还没重新加入）—— 注入"察觉换歌"提示。
         recentTrackSwitch?: { songName: string; artists: string } | null,
+        promptOptions?: PromptBuildOptions,
     ): Promise<{ stable: string; volatileState: string; recencyTail: string }> => {
+        // 主动消息的模板是最后一次聊天时打好、到点才渲染的，凡是「打包这一刻」的状态
+        // 到触发时都已经过期，一律不烤进模板。见 PromptBuildOptions 的清单。
+        const forFirePack = promptOptions?.forFirePack === true;
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
         const timings: Record<string, number> = {};
@@ -356,29 +389,46 @@ export const ChatPrompts = {
         // 开头一行框定，让模型明白这条出现在历史之后的 system 消息是"此刻的状态"，
         // 人设与规则仍以最上方的系统设定为准。
         let volatileState = `\n[System: 实时状态 (Live Context)]\n（以下是此刻的实时状态——当前时间、你正在做的事、你的情绪底色、周边动态。你的人设与聊天规则见最上方的系统设定，此处不再重复。）\n\n`;
-        volatileState += ContextBuilder.buildVolatileCoreState(char, { includeDetailedMemories: true });
+        volatileState += ContextBuilder.buildVolatileCoreState(char, {
+            includeDetailedMemories: true,
+            timeOptions: { skipTimeAwareness: forFirePack },
+        });
 
         // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
         // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
         const config = realtimeConfig || defaultRealtimeConfig;
-        const today = getLocalDateKey();
-        // 自定义时区：开启后「当前时间」按角色所在时区折算，并附时差提示（异国恋等场景）
+        // 自定义时区：日历日、当前日程与实时上下文全部按角色所在地折算。
         const charTz = resolveCharTimeZone(char);
         const utilityPromptsEnabled = shouldInjectUtilityPrompts(char);
         const timePromptEnabled = shouldInjectTimeAwareness(char);
         const schedulePromptEnabled = shouldInjectScheduleAndEmotion(char);
+        const charNow = nowInTimeZone(charTz);
+        const today = getLocalDateKey(charNow);
 
         // 1. 实时世界信息（天气/新闻/时间）
+        //
+        // fire_pack 整块不要：这一段里从时间、节日、天气到热搜全是打包那一刻的读数，
+        // 而且抬头写着「⚠️ 以下信息来自真实世界」，措辞比任何免责声明都硬——跨时段触发时
+        // 角色会照着一份过期的世界说话（大晴天叫人带伞、第二天还在祝七夕快乐、
+        // 同一批旧闻当成「最近真实发生」说三遍）。
+        //
+        // 主动消息不是因此就没有这一段：模板里留着 AMSG_SLOT_REALTIME_WORLD，worker 到点
+        // 自己去拉一次天气热搜、按角色时区判今天是不是节日，再填进去（见 worker/amsg 的
+        // realtimeWorld）。两边的取数与措辞都来自 realtimeWorldCore，是同一份。
         const realtimePromise: Promise<string> = (async () => {
+            if (forFirePack) return '';
             try {
-                if (!timePromptEnabled) return '';
                 if (config.weatherEnabled || config.newsEnabled) {
-                    const realtimeContext = await RealtimeContextManager.buildFullContext(config, charTz);
+                    // 时间行跟着角色的「时间感知」开关走：关掉的角色不该从天气块里读到
+                    // 「当前真实时间」，那是这个开关本来要挡住的东西。
+                    const realtimeContext = await RealtimeContextManager.buildFullContext(config, charTz, {
+                        includeTime: char.timeAwarenessEnabled !== false,
+                    });
                     return `\n${realtimeContext}\n`;
                 }
                 // 基础当前时间 + 时差提示已由 ContextBuilder.buildCoreContext 统一注入（受 timeAwarenessEnabled
                 // 控制，按角色自定义时区折算）；这里只在关闭天气/新闻时补一条"今日特殊节日"，不再重复注入时间/时差，避免双份。
-                const specialDates = RealtimeContextManager.checkSpecialDates();
+                const specialDates = RealtimeContextManager.checkSpecialDates(charTz);
                 if (specialDates.length > 0 && char.timeAwarenessEnabled !== false) {
                     return `\n### 【今日特殊】\n${specialDates.join('、')}\n`;
                 }
@@ -393,7 +443,7 @@ export const ChatPrompts = {
         //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
         const scheduleFeatureOn = schedulePromptEnabled && isScheduleFeatureOn(char);
         const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
-            ? getLocalDailySchedule(char.id).catch(e => {
+            ? getDailyScheduleForChar(char).catch(e => {
                 console.error('Failed to load daily schedule:', e);
                 return null;
             })
@@ -430,8 +480,15 @@ export const ChatPrompts = {
                     return getCharNameById(m.charId) || '群友';
                 };
                 const groupLogStr = recentGroupMsgs.map(m => {
-                    const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                    return `[${dateStr}] [群：${m.groupName}] ${speakerOf(m)}: ${summarizeGroupMsgContent(m)}`;
+                    // 时间戳按角色所在时区读：同一份 prompt 里私聊历史用的就是角色的钟
+                    // （下面 buildMessageHistory 走 formatDate(ts, charTz)），群聊这行要是
+                    // 跟着设备走，纽约角色会看到两套时间。
+                    const dateStr = ChatPrompts.formatDate(m.timestamp, charTz);
+                    // 「约 X 分钟前」是相对打包时刻算的，fire_pack 到点渲染时早就不是那个「刚才」了
+                    // ——角色会把昨天的群聊说成「刚才群里说晚上一起吃饭」。绝对时间戳留着，角色
+                    // 自己对着当前时间就能判断远近。
+                    const relativeAge = forFirePack ? '' : ` · ${formatRelativeAge(m.timestamp)}`;
+                    return `[${dateStr}${relativeAge}] [群：${m.groupName}] ${speakerOf(m)}: ${summarizeGroupMsgContent(m)}`;
                 }).join('\n');
                 return `\n### 【群聊背景 · 你亲历的近期群聊】
 （以下是你所在群里最近的真实聊天记录，按时间排序，发言人已标注；标「你」的就是你自己说的话。这些事你都亲身经历、记得清楚——私聊里对方问起或话题相关时，自然地接上就好，不要装作不知道；也不必刻意逐条汇报群里的动静。）
@@ -497,8 +554,10 @@ ${groupLogStr}\n`;
         })();
 
         // 7. 生活记录（档案 App）注入 — 总开关关闭时 buildLifeRecordInjection 直接返回 ''
+        //    fire_pack 只要摘要数据，不要代记工具说明：后台生成时用户没在说话，那时候
+        //    输出的 [[LIFE:...]] 只可能是把历史里早就记过的事再记一遍。
         const lifeRecordPromise: Promise<string> = utilityPromptsEnabled
-            ? buildLifeRecordInjection(char, userProfile.name)
+            ? buildLifeRecordInjection(char, userProfile.name, { forFirePack })
                 .catch(e => {
                     console.error('Failed to inject life record context:', e);
                     return '';
@@ -520,9 +579,10 @@ ${groupLogStr}\n`;
         volatileState += realtimeText;
 
         // 2a. 日程注入（当前时段 + 意识流独白，每轮都可能变）
-        if (schedule) {
+        //     fire_pack 不烤：改由 worker 到点用 AMSG_SLOT_SCENE 现挑时段（见 amsgFireScene）。
+        if (schedule && !forFirePack) {
             try {
-                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
+                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative, charNow);
                 if (scheduleContext) volatileState += `\n${scheduleContext}\n`;
             } catch (e) {
                 console.error('Failed to inject schedule context:', e);
@@ -534,7 +594,10 @@ ${groupLogStr}\n`;
         //     - 异步（可选）：拉一段歌词片段让这首歌真能影响 char 心境
         // 跟随 builtInPromptSettings.musicAtmosphere：角色扮演关掉后，连歌词副 API
         // 都不调用，也不会注入"对方在听歌 / 一起听"任何提示词。
-        if (shouldInjectMusicAtmosphere(char)) {
+        //     fire_pack 不烤：这首歌是按打包时刻的时段抽的，跟日程一起挪到 AMSG_SLOT_SCENE。
+        //     那边只渲染「你此刻在听什么」一句——一起听状态要读用户此刻的播放器、歌词要拉网络，
+        //     worker 两样都够不着。
+        if (shouldInjectMusicAtmosphere(char) && !forFirePack) {
             try {
                 let charListening: {
                     songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
@@ -548,7 +611,7 @@ ${groupLogStr}\n`;
                         const cfgForLyric = musicCfg?.workerUrl ? musicCfg : loadMusicCfgStandalone();
                         if (cfgForLyric?.workerUrl) {
                             try {
-                                const slot = getCurrentSlot(schedule);
+                                const slot = getCurrentSlot(schedule, charNow);
                                 const seed = `${char.id}-${today}-${slot?.startTime || '00:00'}-${cur.songId}`;
                                 const snippet = await getCharLyricSnippet(cfgForLyric, cur.songId, seed, 6);
                                 if (snippet.length > 0) charListening.lyricSnippet = snippet;
@@ -594,7 +657,10 @@ ${groupLogStr}\n`;
             // 强调这只是虚拟空间的挂机状态，不代表用户本人真的在场——避免角色据此误判现实。
             // 注意：用户登出（vrState.enabled=false）后这段自然不再注入。
             // 用户所在房间/状态实时变 → 进 volatileState（《彼方》是什么的框定仍留在稳定段）。
-            const uv = userProfile?.vrState;
+            // 打包时不注入：这一段说的是「用户此刻挂在哪个房间」，烤进模板之后，用户下线
+            // 好几个小时了角色还在说「看你小人挂在听歌房」。它没有对应的到点槽位——
+            // worker 够不着用户此刻的彼方状态，所以是「不补」的那一类。
+            const uv = forFirePack ? null : userProfile?.vrState;
             if (uv?.enabled) {
                 const VR_ROOM_NAMES: Record<string, string> = {
                     library: '图书馆', music: '听歌房', guestbook: '留言簿', gym: '娱乐室', postoffice: '邮局', cafe: '糯米鸡研发中心',
@@ -616,9 +682,20 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         // Per-character XHS: 必须由角色自己的开关显式打开（UI 默认关闭）。
         // 不再回退到全局 realtimeConfig.xhsEnabled —— 否则配置了 lite/MCP 后，
         // 即使角色开关显示为关，未显式设置过(undefined)的角色仍会收到小红书提示词。
-        const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
+        const xhsServerUrl = realtimeConfig?.xhsMcpConfig?.serverUrl;
+        // 打包给主动消息时还要看 worker 够不够得着：小红书服务器多半跑在用户自己电脑上，
+        // CF 那头连不上。教了角色它就会去用，然后把一次没发生的搜索说成发生过。
+        const mcpXhsAvailable = !!(
+            realtimeConfig?.xhsMcpConfig?.enabled && xhsServerUrl
+            && (!forFirePack || isWorkerReachableUrl(xhsServerUrl))
+        );
         const xhsEnabled = utilityPromptsEnabled && !!(char.xhsEnabled && mcpXhsAvailable);
         const xhsCaps = resolveXhsCapabilities(realtimeConfig?.xhsMcpConfig?.capabilities);
+        // `[schedule_message]` 排的是本地定时消息：存在浏览器里，靠 OSContext 那个 5 秒
+        // 轮询的 React 定时器派发，App 关着就不存在。主动消息 2.0 到点生成走的是另一条路
+        // （worker 到点跑，不需要 App 开着），它有自己的排程工具，worker 会把说明追加在
+        // fire_pack 末尾。两套一起教，角色会挑错的那套，然后「我到点叫你」就落空了。
+        const scheduleMessageTagEnabled = !forFirePack;
 
         if (hasCustomBuiltInPromptSettings(char)) {
             baseSystemPrompt += buildReducedChatRules({
@@ -666,11 +743,12 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - 如果用户发送了图片，请对图片内容进行评论。
 6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`
-   - 转账: \`[[ACTION:TRANSFER:100]]\`
-   - **处理用户转账**: 当看到 \`[系统: 用户向你转账 X]\` 时，你可以决定收下或退回。收下: \`[[ACTION:TRANSFER_ACCEPT]]\`；退回: \`[[ACTION:TRANSFER_RETURN]]\`。请结合人设和情境自然选择（比如害羞地退回、开心地收下），并配上一句话。
+   - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
+   - **处理用户转账**: 当历史里出现 \`[[记录:TRANSFER|to=char|...|status=待处理]]\`（用户转给你、还没处理）时，你可以决定收下或退回。收下: \`[[ACTION:TRANSFER_ACCEPT]]\`；退回: \`[[ACTION:TRANSFER_RETURN]]\`。请结合人设和情境自然选择（比如害羞地退回、开心地收下），并配上一句话。
+   - **【重要】\`[[记录:...]]\` 是系统日志**: 历史里以 \`[[记录:\` 开头的标签是已经发生的事实（谁转给谁、什么状态），只供你了解，**严禁**在回复里照抄输出。你要做动作时只能用 \`[[ACTION:...]]\`。
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
-   - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
+${scheduleMessageTagEnabled ? `   - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。` : ''}
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 你的记忆本身是完整可靠的，回忆过去优先靠记忆和 \`[[RECALL]]\`，**不需要**靠翻日记来"想起"事情。只有当你**自己**特别想重温那天日记里写下的心情、措辞或私密小细节时，才翻阅: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 同上——回忆优先靠记忆和 \`[[RECALL]]\`，只有你自己想重温那天日记的内容时才用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}
@@ -940,8 +1018,10 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 `;
         }
 
-        // 「刚结束见面/通话」的切换提示由倒数第二条消息推导，随对话推进而变 → 易变段
-        const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
+        // 「刚结束见面/通话」的切换提示由倒数第二条消息推导，随对话推进而变 → 易变段。
+        // fire_pack 不烤：打包时确实刚挂电话，但那条主动消息可能是第二天凌晨才发出去的，
+        // 角色照着这句接一句「刚才电话里说的那个……」就穿帮了。
+        const previousMsg = (currentMsgs.length > 1 && !forFirePack) ? currentMsgs[currentMsgs.length - 2] : null;
         if (previousMsg && previousMsg.metadata?.source === 'date') {
             volatileState += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
         }
@@ -1079,7 +1159,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         processedExcludeIds?: Set<number>,
     ) => {
         // Filter Logic
-        let effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
+        // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
+        // 这里只应用用户额外断点。旧角色尚未完成迁移时才回退 hideBeforeMessageId。
+        const userStartMessageId = (char.contextRangePolicyVersion || 0) >= 1
+            ? char.contextUserStartMessageId
+            : char.hideBeforeMessageId;
+        let effectiveHistory = messages.filter(m => !userStartMessageId || m.id >= userStartMessageId);
         effectiveHistory = effectiveHistory.filter(m => shouldKeepHistoryMessageForPrompt(m, char));
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
@@ -1115,6 +1200,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 })();
                 const sourceTag = (() => {
                     const source = m.metadata?.source;
+                    if (source === 'call') return '[通话]';
+                    if (source === 'date') return '[约会]';
+                    if (source === 'story_theater_memory') return `[剧情：${m.metadata?.theaterTitle || '共同经历'}]`;
                     const label = source === 'call' ? '通话' : source === 'date' ? '约会' : '聊天';
                     return userProfileNameAtMessage ? `[${label} · ${userProfileNameAtMessage}]` : `[${label}]`;
                 })();
@@ -1158,24 +1246,23 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
+                // TODO(记录形态): 戳一戳 / 时间间隔提示等其他系统事件, 等转账的 [[记录:TRANSFER]]
+                // 观察一段时间后再迁 (transferFormat.ts 头注) —— 防线已按整个记录命名空间就位。
+                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
                 else if (m.type === 'transfer') {
+                    // 统一记录形态 [[记录:TRANSFER|to=|amount=|status=]] —— 跟输出语法
+                    // [[ACTION:TRANSFER|to=|amount=]] 共用词汇表 (见 transferFormat.ts 头注)。
+                    // 旧的 `[系统: 你向xx转账 N]` 第二人称句式会被模型照抄成正文;
+                    // 记录前缀即幂等哨兵, 抄了也被解析端消费丢弃。
+                    // 顺带修掉旧实现的不一致: 原始转账行现在读 live status (metadata.status),
+                    // 被收/退之后不再永远显示「待你处理」。
                     const tMeta = m.metadata || {};
-                    const amtStr = tMeta.amount !== undefined ? ` ${tMeta.amount}` : '';
-                    const uName = userProfile?.name || '用户';
-                    if (tMeta.receipt === 'accepted') {
-                        content = m.role === 'user'
-                            ? `${timeStr} [系统: ${uName}接收了你的转账${amtStr}]`
-                            : `${timeStr} [系统: 你接收了${uName}的转账${amtStr}]`;
-                    } else if (tMeta.receipt === 'returned') {
-                        content = m.role === 'user'
-                            ? `${timeStr} [系统: ${uName}退回了你的转账${amtStr}]`
-                            : `${timeStr} [系统: 你退回了${uName}的转账${amtStr}]`;
-                    } else {
-                        content = m.role === 'user'
-                            ? `${timeStr} [系统: ${uName}向你转账${amtStr}（待你处理，可收下或退回）]`
-                            : `${timeStr} [系统: 你向${uName}转账${amtStr}]`;
-                    }
+                    content = `${timeStr} ${formatTransferRecord({
+                        role: m.role as 'user' | 'assistant',
+                        amount: tMeta.amount,
+                        receipt: tMeta.receipt,
+                        status: tMeta.status,
+                    })}`;
                 }
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
@@ -1231,14 +1318,20 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const commentsLine = noteComments.length
                         ? `\n热评: ${noteComments.slice(0, 15).map((c: any) => `${c.author || '匿名'}: ${c.content}`).join(' | ')}`
                         : '';
+                    const interactions = [
+                        `${note.likes ?? 0}赞`,
+                        note.collects != null ? `${note.collects}收藏` : '',
+                        note.commentCount != null ? `${note.commentCount}评论` : '',
+                        note.shareCount != null ? `${note.shareCount}分享` : '',
+                    ].filter(Boolean).join(' ');
                     const idLine = noteId ? `\nnoteId=${noteId}` : '';
                     if (desc || commentsLine) {
-                        content = `${timeStr} [${sender}分享了小红书笔记]${idLine}\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${desc || '无'}${commentsLine}\n${m.role === 'user' ? '(请根据你实际读到的标题/正文/评论发表看法，不要补不存在的细节)' : ''}`;
+                        content = `${timeStr} [${sender}分享了小红书笔记]${idLine}\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n互动: ${interactions}\n简介: ${desc || '无'}${commentsLine}\n${m.role === 'user' ? '(请根据你实际读到的标题/正文/评论发表看法，不要补不存在的细节)' : ''}`;
                     } else {
                         const detailHint = noteId
                             ? `如果需要读原链接，请先用 [[XHS_DETAIL: ${detailTarget || noteId}]] 打开这条笔记；不要改用标题搜索来冒充这篇原帖。`
                             : '如果需要读原链接，请先告诉用户这张卡片缺少 noteId，无法直接打开详情；不要改用标题搜索来冒充这篇原帖。';
-                        content = `${timeStr} [${sender}分享了小红书笔记]${idLine}\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n（正文/评论没抓到，别假装读过。${detailHint}）`;
+                        content = `${timeStr} [${sender}分享了小红书笔记]${idLine}\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n互动: ${interactions}\n（正文/评论没抓到，别假装读过。${detailHint}）`;
                     }
                 }
                 else if ((m.type as string) === 'vr_card') {

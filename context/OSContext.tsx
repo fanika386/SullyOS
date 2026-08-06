@@ -7,31 +7,48 @@ import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport'
 import { isBlobRef, getBlobForRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
 import { LEGACY_DEFAULT_WALLPAPER, isLegacyDefaultWallpaper, shouldPreserveLegacyDefaultWallpaper } from '../utils/wallpaperCompat';
 import { migrateSharkpanAssets } from '../utils/sharkpanAssetMigration';
-import { writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
-import { encodeVectorsForBackup } from '../utils/memoryPalace/db';
+import { SULLY_DEFAULT_AVATAR_URL, shouldMigrateSullyAvatar } from '../utils/sullyAvatar';
+import { exportStoryTheaterAppearanceSetting, restoreStoryTheaterAppearanceSetting } from '../utils/storyTheaterBackup';
+import { createV2ArrayFieldWriter, writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
+import { encodeVectorsForBackup, encodeVectorsForBackupChunked } from '../utils/memoryPalace/db';
 import { DEFAULT_AUTO_SUMMARY_THRESHOLD, normalizeAutoSummaryThreshold } from '../utils/memoryPalace/pipeline';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
 import { runVRSession } from '../utils/vrWorld/runSession';
 import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
-import { WorldScheduler } from '../utils/worldHome/scheduler';
+import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { runWorldEpisode, rerollWorldCharBeat } from '../utils/worldHome/engine';
 import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
-import { recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
+import { captureApiRequestOnce, getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext, updateApiRequestCaptureUsage } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
 import { DEFAULT_PROXY_WORKER, getProxyWorkerUrl, rewriteStaleWorkerUrl, rewriteXhsLiteServerUrl } from '../utils/proxyWorker';
 import { DEFAULT_XHS_CAPABILITIES } from '../utils/xhsCapabilities';
 import { buildUserProfileBackupFields, DEFAULT_USER_PROFILE_ID, getDefaultUserProfile, normalizeUserProfiles, resolveUserProfileForCharacter as resolveUserProfileForCharacterFromList, withUserProfileId } from '../utils/userProfiles';
-import { INSTALLED_APPS } from '../constants';
+import { INSTALLED_APPS, HIDDEN_APP_NAMES } from '../constants';
+import { trackEvent, trackDataScaleOnce, trackCurrentAppearanceOnce, trackCurrentCharSettingsOnce, trackCurrentFeaturesOnce } from '../utils/analytics';
+import { collectAppearance, collectCharSettings, collectDataScale, collectFeatureFlagsAsync } from '../utils/analyticsSnapshot';
 import { markBackupDone } from '../utils/backupReminder';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
+import { normalizeModelIds } from '../utils/modelList';
+import {
+  CONTEXT_RANGE_POLICY_VERSION,
+  DEFAULT_MANUAL_CONTEXT_LIMIT,
+  loadCharacterContextRange,
+  migrateCharacterContextRange,
+} from '../utils/chatContextRange';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { CHAT_GEN_EVENTS, setChatViewSnapshot } from '../utils/chatGenEvents';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
+import { resolveCharTimeZone } from '../utils/timezone';
+import { ActiveMsgStore } from '../utils/activeMsgStore';
+import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
@@ -49,6 +66,7 @@ import { exportSignalLocal } from '../utils/vrWorld/signal';
 import { exportWorldHomeLocal } from '../utils/worldHome/localBackup';
 import { exportLuckinLocal } from '../utils/luckinMcpClient';
 import { exportMcdLocal } from '../utils/mcdMcpClient';
+import { exportMcpLocal } from '../utils/mcpClient';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 
@@ -72,11 +90,17 @@ type JSZipFileLike = {
   async(type: 'uint8array'): Promise<Uint8Array>;
 };
 
+type JSZipWriteOptions = {
+  base64?: boolean;
+  compression?: 'STORE' | 'DEFLATE';
+  compressionOptions?: { level?: number };
+};
+
 type JSZipLike = {
-  folder: (name: string) => { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null;
+  folder: (name: string) => { file: (name: string, data: string, options?: JSZipWriteOptions) => void } | null;
   file: {
     (name: string): JSZipFileLike | null;
-    (name: string, data: string | Uint8Array, options?: { base64?: boolean }): void;
+    (name: string, data: string | Uint8Array, options?: JSZipWriteOptions): void;
   };
   generateAsync: (
     options: {
@@ -235,6 +259,9 @@ const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
   rerank: { enabled: false, baseUrl: '', apiKey: '', model: 'BAAI/bge-reranker-v2-m3', topN: 5 },
 };
 
+/** deleteCharacter 的结果：cloud-cleanup-failed = 云端还有任务没清掉，本地没删。 */
+export type DeleteCharacterResult = { status: 'deleted' } | { status: 'cloud-cleanup-failed' };
+
 interface OSContextType {
   activeApp: AppID;
   openApp: (appId: AppID) => void;
@@ -252,7 +279,12 @@ interface OSContextType {
   activeCharacterId: string;
   addCharacter: () => Promise<CharacterProfile>;
   updateCharacter: (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => void;
-  deleteCharacter: (id: string) => void;
+  /**
+   * 删角色。名下有 amsg2 任务的角色会先 await 云端任务取消 + client_state 清理，
+   * 清不掉返回 cloud-cleanup-failed 且**不删本地**（调用方弹「重试 / 仍然删除」，
+   * 「仍然删除」= 传 { force: true } 放行）。没有任务的角色维持本地直删的快路径。
+   */
+  deleteCharacter: (id: string, options?: { force?: boolean }) => Promise<DeleteCharacterResult>;
   setActiveCharacterId: (id: string) => void;
 
   // 角色分组（神经链接"文件夹"，与群聊 groups 无关）
@@ -302,6 +334,7 @@ interface OSContextType {
   // API Presets
   apiPresets: ApiPreset[];
   addApiPreset: (name: string, config: APIConfig) => void;
+  updateApiPreset: (id: string, name: string, config: APIConfig) => void;
   removeApiPreset: (id: string) => void;
 
   // 实时配置 (天气、新闻、Notion等)
@@ -590,9 +623,7 @@ const defaultUserProfile: UserProfile = {
 const sullyV2: CharacterProfile = {
   id: 'preset-sully-v2', // Unique ID to prevent duplication
   name: 'Sully',
-  // 本地打包资源（public/sully/head.png），同源加载、不依赖图床/CDN，图床挂了也不受影响。
-  // BASE_URL 前缀兼容 GitHub Pages 的相对 base（见 vite.config.ts）。
-  avatar: `${(import.meta as any).env?.BASE_URL ?? '/'}sully/head.png`,
+  avatar: SULLY_DEFAULT_AVATAR_URL,
   description: 'AI助理 / 电波系黑客猫猫',
   
   systemPrompt: `[Role Definition]
@@ -677,6 +708,8 @@ Sully是小手机的内置AI。
   // Default theme settings
   bubbleStyle: 'default', // Or specific theme ID if we had one
   contextLimit: 1000,
+  contextRangeMode: 'manual',
+  contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
   
   // Default Room Config
   roomConfig: {
@@ -951,6 +984,69 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setApiCallAmbientContext({ appId: activeApp, appName, charId: char?.id, charName: char?.name });
   }, [activeApp, activeCharacterId, characters]);
 
+  // --- 使用统计：打开了哪个 App ---
+  // 挂在 activeApp 上而不是塞进 openApp，是因为进一个 App 有好几条路（桌面点图标、
+  // 从聊天直接进见面、通话挂起后回来…），activeApp 是它们唯一的共同落点。
+  // 回桌面不算「用了某个功能」，跳过。只发功能名，不带角色、不带任何内容。
+  useEffect(() => {
+      if (activeApp === AppID.Launcher) return;
+      const appName = INSTALLED_APPS.find(a => a.id === activeApp)?.name ?? HIDDEN_APP_NAMES[activeApp];
+      if (!appName) return;
+      trackEvent(`打开${appName}`);
+  }, [activeApp]);
+
+  // --- 使用统计：数据规模档位 ---
+  // 数据加载完之后报一次区间（0 / 1-100 / …），不报精确值、不报任何内容。
+  // 聊天条数走 IndexedDB 的 count()，一条消息都不会被读出来；存储占用是浏览器
+  // 给的字节数。每次会话最多一次，节流标记只在内存里（见 utils/analytics.ts）。
+  const scaleReportedRef = useRef(false);
+  useEffect(() => {
+      if (!isDataLoaded || scaleReportedRef.current) return;
+      scaleReportedRef.current = true;
+      void (async () => {
+          trackDataScaleOnce(await collectDataScale(characters));
+      })();
+  }, [isDataLoaded, characters]);
+
+  // --- 使用统计：当前在用哪套外观 / 角色级设置 ---
+  // 报「现在用的是哪个」而不是「点过哪个」——后者只有折腾的人会出现，
+  // 拿来决定砍哪个预设会砍反。取数和收敛都在 utils/analyticsSnapshot.ts 里，
+  // 用户自己捏的主题、字体、白框 CSS 一律收敛成 custom / 用了，不带他起的名字。
+  useEffect(() => {
+      if (!isDataLoaded) return;
+      trackCurrentAppearanceOnce(collectAppearance(theme, characters.find(c => c.id === activeCharacterId)));
+  }, [isDataLoaded, characters, activeCharacterId, theme]);
+
+  useEffect(() => {
+      if (!isDataLoaded || characters.length === 0) return;
+      trackCurrentCharSettingsOnce(collectCharSettings(characters, activeCharacterId));
+  }, [isDataLoaded, characters, activeCharacterId]);
+
+  // --- 使用统计：现在开着哪些功能 ---
+  // 跟「当前外观」一个道理：外部服务这类配置配一次就长期生效，只看「打开过配置页」
+  // 那种流量点的话，配好之后再没进过设置页的人永远不出现，拿来判断「有没有人要」会判反。
+  //
+  // 收敛全在 utils/analyticsSnapshot.ts 里做，这里只负责把 OSContext 手上那几份
+  // state 递过去。地址、密钥、token、账号名一个字都不会进上报。
+  // 自己拦一道「只跑一次」：上报侧本来就有 once 门，但取数要读两次 IndexedDB
+  // （彼方独立线路、主动消息 2.0 的全局配置），让它跟着 characters 每次变更白跑不值当。
+  const featuresReportedRef = useRef(false);
+  useEffect(() => {
+      if (!isDataLoaded || featuresReportedRef.current) return;
+      featuresReportedRef.current = true;
+      void (async () => {
+          trackCurrentFeaturesOnce(await collectFeatureFlagsAsync({
+              realtimeConfig,
+              cloudBackupConfig,
+              memoryPalaceConfig,
+              remoteVectorConfig,
+              apiConfig,
+              apiPresetCount: apiPresets.length,
+              characters,
+          }));
+      })();
+  }, [isDataLoaded, realtimeConfig, cloudBackupConfig, memoryPalaceConfig, remoteVectorConfig, apiConfig, apiPresets, characters]);
+
   // --- Global Error Interception ---
   useEffect(() => {
       if (interceptorsInitialized.current) return;
@@ -963,6 +1059,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           
           const urlStr = String(resource);
           const fetchStartedAt = Date.now();
+          // Bare fetch calls do not carry explicit metadata. Snapshot the active
+          // App now; reading the ambient value after a long response would label
+          // the request as whichever App the user navigated to in the meantime.
+          const ambientMetaAtStart = getApiCallAmbientContext();
 
           // 采样参数兼容层（详见 utils/samplingParamCompat.ts）：
           // 某些模型废弃了 temperature/top_p/top_k，带上直接 400。这里在所有 /chat/completions
@@ -995,6 +1095,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       if (body !== rawBody) sendArgs = [resource, { ...(config as RequestInit), body }];
                   } catch { /* 非 JSON body：原样放行 */ }
               }
+          }
+
+          // 用户手动开启的「本次发送统计」：只抢占下一条请求，并在真正发出前立即自动关闭。
+          // 取兼容层处理后的 sendArgs，展示内容与本次实际提交给服务端的请求体一致。
+          let apiRequestCaptureId: string | null = null;
+          if (urlStr.includes('/chat/completions')) {
+              const captureMeta = (sendArgs[1] as any)?.__sullyMeta || ambientMetaAtStart;
+              apiRequestCaptureId = captureApiRequestOnce({ url: urlStr, body: (sendArgs[1] as any)?.body, meta: captureMeta });
           }
 
           try {
@@ -1039,7 +1147,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 正文 44s 才灌完，卡片却记成 6.5s（实测误导排查）。clone 与调用方并行消费同一
               // 条流，text() 完成时刻 ≈ 真实收完时刻。
               if (urlStr.includes('/chat/completions')) {
-                  const meta = (config as any)?.__sullyMeta;
+                  const meta = (config as any)?.__sullyMeta || ambientMetaAtStart;
+                  const requestId = (config as any)?.__sullyApiCallId;
                   const body = (sendArgs[1] as any)?.body;
                   const status = response.status;
                   const ok = response.ok;
@@ -1051,10 +1160,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           const durationMs = Date.now() - fetchStartedAt;
                           let parsed: any = undefined;
                           try { parsed = JSON.parse(t); } catch { /* 流式/非 JSON：把原始文本交给 recordApiCall 的 SSE 兜底解析 */ }
-                          recordApiCall({ url: urlStr, body, status, ok, response: parsed, responseText: parsed === undefined ? t : undefined, meta, durationMs });
-                      }).catch(() => recordApiCall({ url: urlStr, body, status, ok, meta, durationMs: Date.now() - fetchStartedAt }));
+                          updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok, response: parsed, responseText: parsed === undefined ? t : undefined });
+                          recordApiCall({ requestId, url: urlStr, body, status, ok, response: parsed, responseText: parsed === undefined ? t : undefined, meta, durationMs });
+                      }).catch(() => {
+                          updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok });
+                          recordApiCall({ requestId, url: urlStr, body, status, ok, meta, durationMs: Date.now() - fetchStartedAt });
+                      });
                   } else {
-                      recordApiCall({ url: urlStr, body, status, ok, meta, durationMs: Date.now() - fetchStartedAt });
+                      updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok });
+                      recordApiCall({ requestId, url: urlStr, body, status, ok, meta, durationMs: Date.now() - fetchStartedAt });
                   }
               }
 
@@ -1099,7 +1213,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           } catch (err: any) {
               // Network Failure
               if (urlStr.includes('/chat/completions')) {
-                  recordApiCall({ url: urlStr, body: (sendArgs[1] as any)?.body, ok: false, meta: (config as any)?.__sullyMeta, durationMs: Date.now() - fetchStartedAt });
+                  updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok: false });
+                  recordApiCall({ requestId: (config as any)?.__sullyApiCallId, url: urlStr, body: (sendArgs[1] as any)?.body, ok: false, meta: (config as any)?.__sullyMeta || ambientMetaAtStart, durationMs: Date.now() - fetchStartedAt });
               }
               setSystemLogs(prev => [{
                   id: `log-${Date.now()}`,
@@ -1199,7 +1314,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
         
         if (savedApi) setApiConfig(JSON.parse(savedApi));
-        if (savedModels) setAvailableModels(JSON.parse(savedModels));
+        if (savedModels) {
+            try { setAvailableModels(normalizeModelIds(JSON.parse(savedModels))); }
+            catch (error) { console.warn('Model list load error', error); }
+        }
         if (savedPresets) setApiPresets(JSON.parse(savedPresets));
 
         // 加载实时配置
@@ -1381,10 +1499,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  const isCorrupted = !currentSprites['normal'] || !currentSprites['chibi'];
                  const needsWallUpdate = existingSully.roomConfig?.wallImage !== sullyV2.roomConfig?.wallImage;
                  const needsSkinSets = !existingSully.dateSkinSets || existingSully.dateSkinSets.length === 0;
-                 // 老用户头像仍是旧图床默认图（不稳定，常拉不到）→ 换成本地打包图；
-                 // 用户自己改过头像的（值不等于旧默认）保持不动。
-                 const OLD_SULLY_AVATAR = 'https://sharkpan.xyz/f/BZ3VSa/head.png';
-                 const needsAvatarUpdate = existingSully.avatar === OLD_SULLY_AVATAR;
+                 // 默认头像曾先后使用旧图床和依赖部署根路径的本地地址。
+                 // 这些地址在备份恢复或 GitHub Pages 子路径变化后会 404；统一迁移到资产仓库。
+                 // 用户自己改过的头像不在迁移名单内，保持不动。
+                 const needsAvatarUpdate = shouldMigrateSullyAvatar(existingSully.avatar);
                  // 之前误把家园 chibi 替换成了像素小屋的像素立绘 → 还原为原版 sharkpan 立绘
                  const hasMisplacedPixelChibi = typeof currentSprites['chibi'] === 'string'
                      && currentSprites['chibi'].startsWith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADUAAAA4CAYAAABdeLCu');
@@ -1431,7 +1549,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         }
 
-        finalChars = finalChars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c)));
+        let resetAutoContextCount = 0;
+        let migratedContextCount = 0;
+        finalChars = finalChars.map(c => {
+          const normalized = normalizeCharacterDefaults(normalizeCharacterImpression(c));
+          const migration = migrateCharacterContextRange(normalized);
+          if (migration.migrated) migratedContextCount++;
+          if (migration.resetAutoContext) resetAutoContextCount++;
+          return migration.character;
+        });
+        if (migratedContextCount > 0) {
+          await Promise.all(finalChars.map(c => DB.saveCharacter(c)));
+        }
+        if (resetAutoContextCount > 0) {
+          setTimeout(() => addToast(
+            `上下文范围已升级：${resetAutoContextCount} 个全自动记忆角色已恢复为自适应模式。需要读取更多旧原文时，可在聊天设置中手动调整。`,
+            'info',
+          ), 1200);
+        }
 
         if (finalChars.length > 0) {
           setCharacters(finalChars);
@@ -1460,6 +1595,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setUserProfiles(normalizedProfiles);
         setUserProfile(defaultProfile);
         setCharacterUserProfileBindings(defaultProfile.characterUserProfileBindings || {});
+
+        // amsg2 脏标记兜底补传：上次会话打了脏、但没等到上传就被杀进程的角色（10s 去抖
+        // 窗口内关 App），按 localStorage 底账用刚从 DB 读回的数据重建快照传一次。
+        // realtimeConfig 的 state 此刻可能还没就位，直接读它的持久化来源。
+        try {
+          const savedRealtime = localStorage.getItem('os_realtime_config');
+          resumePendingAmsgStateSync({
+            characters: finalChars,
+            userProfile: dbUser ?? defaultUserProfile,
+            groups: dbGroups,
+            realtimeConfig: savedRealtime
+              ? { ...defaultRealtimeConfig, ...JSON.parse(savedRealtime) }
+              : defaultRealtimeConfig,
+          });
+        } catch (err) {
+          console.warn('[AmsgStateSync] 启动补传失败（不影响启动）', err);
+        }
 
       } catch (err) {
         console.error('Data init failed:', err);
@@ -1727,21 +1879,41 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const detail = (e as CustomEvent).detail as { charId?: string; buffs?: unknown; buffInjection?: unknown };
           const charId = detail?.charId;
           if (!charId) return;
+          // 内存同步 + 云端快照打脏合成一步。打脏放这里的理由:
+          //   1. 主链路回合收尾那次打脏跑在情绪评估落库之前, 不补这一下云端那份情绪恒慢一拍;
+          //   2. 情绪广播源不止一个 (本地评估 / 记忆潜水 / instant push 回写), 全汇到这个事件,
+          //      堵这一个点就够, 不用去改每个上游。
+          // 快照要的是合并后的角色, 所以跟 updateCharacter 一样在 updater 里取; 全局状态读 ref
+          // 而不是闭包变量——本 effect 只在 sendProactiveNativeNotification 变化时重建, 闭包里
+          // 的 userProfile / groups / realtimeConfig 会一直停在首帧。
+          const syncBuffIntoMemory = (
+              nextBuffs: CharacterProfile['activeBuffs'],
+              nextInjection: string | undefined,
+          ) => {
+              setCharacters(prev => prev.map(c => {
+                  if (c.id !== charId) return c;
+                  const next = normalizeCharacterImpression({ ...c, activeBuffs: nextBuffs, buffInjection: nextInjection });
+                  markAmsgStateDirty({
+                      char: next,
+                      userProfile: userProfileRef.current,
+                      groups: groupsRef.current,
+                      realtimeConfig: realtimeConfigRef.current,
+                  });
+                  return next;
+              }));
+          };
           if (Array.isArray(detail.buffs)) {
-              const nextBuffs = detail.buffs as CharacterProfile['activeBuffs'];
-              const nextInjection = typeof detail.buffInjection === 'string' ? detail.buffInjection : '';
-              setCharacters(prev => prev.map(c => c.id === charId
-                  ? normalizeCharacterImpression({ ...c, activeBuffs: nextBuffs, buffInjection: nextInjection })
-                  : c));
+              syncBuffIntoMemory(
+                  detail.buffs as CharacterProfile['activeBuffs'],
+                  typeof detail.buffInjection === 'string' ? detail.buffInjection : '',
+              );
               return;
           }
           // 无 buffs 的纯刷新信号 (runPushTailPipeline 等): 从 DB 兜底重读该角色 buff.
           DB.getAllCharacters().then(all => {
               const updated = all.find(c => c.id === charId);
               if (!updated) return;
-              setCharacters(prev => prev.map(c => c.id === charId
-                  ? normalizeCharacterImpression({ ...c, activeBuffs: updated.activeBuffs, buffInjection: updated.buffInjection })
-                  : c));
+              syncBuffIntoMemory(updated.activeBuffs, updated.buffInjection);
           }).catch(() => {});
       };
 
@@ -1782,7 +1954,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           addToast(`${charName || '角色'}的情绪评估失败：${reason || '未知原因'}（不影响聊天回复）`, 'error');
       };
 
+      // 主动消息处理失败 → 明确告诉用户，别让消息无声无息地不出现。
+      // 平时 push 路径是不弹 toast 的，但这里频率极低（本地存储出问题才会有），
+      // 而且不说的话用户只会觉得「角色今天没理我」。每角色 60s 冷却防连推时刷屏。
+      const inboxFailToastAt: Record<string, number> = {};
+      const inboxFailHandler = (e: Event) => {
+          const { charId, charName, kind } = ((e as CustomEvent).detail || {}) as
+              { charId?: string; charName?: string; kind?: 'retrying' | 'degraded' | 'swallowed' };
+          if (!charId) return;
+          const now = Date.now();
+          if (now - (inboxFailToastAt[charId] || 0) < 60_000) return;
+          inboxFailToastAt[charId] = now;
+          const who = charName || '角色';
+          const text = kind === 'degraded'
+              ? `${who}有一条消息没能正常处理，已按原文显示（表情、卡片这些可能不完整）`
+              : kind === 'swallowed'
+                  ? `${who}有一条定时消息被跳过了：本地存储异常，判不出发出来会不会打断你们当前的对话`
+                  : `${who}有一条消息暂时没能显示，稍后会自动重试`;
+          addToast(text, 'error');
+      };
+
       window.addEventListener('active-msg-received', handler);
+      window.addEventListener('active-msg-process-failed', inboxFailHandler);
       window.addEventListener('active-msg-progress', progressHandler);
       window.addEventListener('active-msg-open', openHandler);
       window.addEventListener('emotion-updated', buffSyncHandler);
@@ -1792,6 +1985,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       document.addEventListener('visibilitychange', onVisible);
       return () => {
           window.removeEventListener('active-msg-received', handler);
+          window.removeEventListener('active-msg-process-failed', inboxFailHandler);
           window.removeEventListener('active-msg-progress', progressHandler);
           window.removeEventListener('active-msg-open', openHandler);
           window.removeEventListener('emotion-updated', buffSyncHandler);
@@ -1956,9 +2150,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // 3. Build prompt & message history — 走和 useChatAI / emotion eval 同一个 helper，
               //    保证三家拿到的"材料"完全一致；区别只在前面追加的"现在主动找用户"那条 hint。
-              const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
-              const emojis = await DB.getEmojis();
-              const categories = await DB.getEmojiCategories();
+              const proactiveRange = await loadCharacterContextRange(char);
+              if (proactiveRange.userBreakpointExpired) {
+                  updateCharacter(charId, { contextUserStartMessageId: undefined });
+              }
+              const allMsgs = proactiveRange.messages;
+              // 1.0 本地主动消息不会经过 Chat.tsx 的 aiVisibleEmojis。
+              // 这里既要过滤提示词，也要过滤下方 [[SEND_EMOJI]] 的按名反查：
+              // 只修提示词仍挡不住模型复述旧上下文里的表情名；只修落库则模型仍会看到越权表情。
+              // 2.0 推送路径已在 activeMsgClient / activeMsgRuntime 做同样的双层收口。
+              const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
+                  await DB.getEmojis(),
+                  await DB.getEmojiCategories(),
+                  charId,
+              );
 
               // 上一轮缓存的意识流独白 —— 主路径用 React state，主动消息这里用 ref Map
               const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
@@ -1967,7 +2172,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   char, userProfile: currentUserProfile!, groups: currentGroups,
                   emojis, categories,
                   historyMsgs: allMsgs,
-                  contextLimit: char.contextLimit || 500,
+                  contextLimit: Math.max(1, allMsgs.length),
                   realtimeConfig: currentRealtimeConfig,
                   innerState: cachedInnerState,
                   // 实时音乐播放状态 —— OSContext 在 MusicProvider 上层用不了 useMusic()，
@@ -2344,11 +2549,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               for (const w of worlds) {
                   if (migrateWorldDaySegs(w)) await DB.saveWorld(w).catch(() => {});
               }
-              WorldScheduler.reconcile(
-                  worlds
-                      .filter(w => (w.offlineTickSlots?.length || 0) > 0)
-                      .map(w => ({ worldId: w.id, slots: w.offlineTickSlots! }))
-              );
+              WorldScheduler.reconcile(toTickEntries(worlds));
           })
           .catch(() => {});
 
@@ -2361,6 +2562,63 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);
+
+  // ─── utils 层直写 DB 后的内存回灌 ───
+  // 这两条路都在 React 之外把角色写进了 IndexedDB。不回灌的话内存里那份角色停在旧值，
+  // 之后随便哪个 updateCharacter 都会拿旧内存合并写回，把刚写进去的东西反向抹掉
+  // （情绪 buff 早就踩过这个坑，见上面 buffSyncHandler 的注释），云端快照也跟着停格。
+  useEffect(() => {
+      // 角色自排后续任务被采纳（「汤炖上了，两小时后叫你」）：任务清单只落在 DB，
+      // React 不知情会同时断掉 presence 门、打脏门和面板上的待触发清单三条线。
+      const tasksAdoptedHandler = (e: Event) => {
+          const charId = ((e as CustomEvent).detail || {}).charId as string | undefined;
+          if (!charId) return;
+          void DB.getAllCharacters().then(all => {
+              const fresh = all.find(c => c.id === charId);
+              if (!fresh) return;
+              setCharacters(prev => prev.map(c => {
+                  if (c.id !== charId) return c;
+                  // 只把 activeMsg2Config 这一个字段搬回来：整对象覆盖会让内存里其它更新的
+                  // 字段（比如同一时刻刚落地的情绪）倒退，反过来用旧内存整对象写 DB 又会把
+                  // 刚采纳的任务清单抹掉。
+                  const next = normalizeCharacterImpression({ ...c, activeMsg2Config: fresh.activeMsg2Config });
+                  markAmsgStateDirty({
+                      char: next,
+                      userProfile: userProfileRef.current,
+                      groups: groupsRef.current,
+                      realtimeConfig: realtimeConfigRef.current,
+                  });
+                  return next;
+              }));
+          }).catch(() => {});
+      };
+
+      // 听歌时角色把歌加进自己的歌单（MusicContext 直写 DB）：歌单进 fire_pack，
+      // 不打脏角色到点还以为那首歌没收藏过。
+      const musicProfileSyncHandler = (e: Event) => {
+          const detail = ((e as CustomEvent).detail || {}) as { charId?: string; musicProfile?: CharacterProfile['musicProfile'] };
+          const { charId, musicProfile } = detail;
+          if (!charId || !musicProfile) return;
+          setCharacters(prev => prev.map(c => {
+              if (c.id !== charId) return c;
+              const next = normalizeCharacterImpression({ ...c, musicProfile });
+              markAmsgStateDirty({
+                  char: next,
+                  userProfile: userProfileRef.current,
+                  groups: groupsRef.current,
+                  realtimeConfig: realtimeConfigRef.current,
+              });
+              return next;
+          }));
+      };
+
+      window.addEventListener('amsg2-tasks-adopted', tasksAdoptedHandler);
+      window.addEventListener('char-music-profile-updated', musicProfileSyncHandler);
+      return () => {
+          window.removeEventListener('amsg2-tasks-adopted', tasksAdoptedHandler);
+          window.removeEventListener('char-music-profile-updated', musicProfileSyncHandler);
+      };
+  }, []);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, lockWallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
@@ -2527,9 +2785,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           addToast('云端备份完成', 'success');
+          // provider / mode 都是代码里写死的枚举；连接地址、账号、错误原文一概不带。
+          trackEvent('上传备份到云端', {
+              provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav',
+              mode,
+              result: '成功',
+          });
       } catch (e: any) {
           setSysOperation({ status: 'idle', message: '', progress: 0 });
           addToast(`云端备份失败: ${e.message}`, 'error');
+          trackEvent('上传备份到云端', {
+              provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav',
+              mode,
+              result: '失败',
+          });
           throw e;
       }
   };
@@ -2595,8 +2864,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setRemoteVectorConfig(newConfig);
     localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
   };
-  const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
+  const saveModels = (models: string[]) => {
+      const safeModels = normalizeModelIds(models);
+      setAvailableModels(safeModels);
+      localStorage.setItem('os_available_models', JSON.stringify(safeModels));
+  };
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  const updateApiPreset = (id: string, name: string, config: APIConfig) => { setApiPresets(prev => { const next = prev.map(p => p.id === id ? { ...p, name, config } : p); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
   const addCharacter = async () => {
@@ -2613,7 +2887,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       description: '点击编辑设定...',
       systemPrompt: '',
       memories: [],
-      contextLimit: 500,
+      contextLimit: DEFAULT_MANUAL_CONTEXT_LIMIT,
+      contextRangeMode: 'manual',
+      contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
       emotionConfig: { enabled: true },
     };
     setCharacters(prev => [...prev, newChar]);
@@ -2621,8 +2897,113 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     await DB.saveCharacter(newChar);
     return newChar;
   };
-  const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
-  const deleteCharacter = async (id: string) => {
+  const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => {
+    setCharacters(prev => {
+      const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) }) : c);
+      const target = updated.find(c => c.id === id);
+      if (target) {
+        const before = prev.find(c => c.id === id);
+        // 落库成功后给 amsg2 云端快照打脏：改人设 / 改记忆 / 面板取消任务等所有落库路径都
+        // 汇到这里，不打的话云端 fire_pack 停在上一轮聊天，角色到点拿旧世界说话。
+        // markDirty 内部自带「没开 2.0 / 没挂 AI 任务就 return」的门，普通角色零成本。
+        DB.saveCharacter(target).then(() => {
+          markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
+          // 时区和名字是另一条路：它们冻在远端任务行里，fire_pack 刷新盖不到。
+          // 上游按任务行的 tzId 推进循环任务的下次触发时刻；fixed 模式的推送标题也直接
+          // 读任务行的 contactName。只刷真的变了的那几项，别搭别的操作的便车。
+          const timeZone = resolveCharTimeZone(before) !== resolveCharTimeZone(target);
+          const contactName = !!before && before.name !== target.name;
+          if (timeZone || contactName) {
+            ActiveMsgClient.refreshCharPendingTaskRow(target, { timeZone, contactName }).catch((error) => {
+              console.warn('[amsg2] 角色资料变更后刷新远端任务行失败', target.id, error);
+            });
+          }
+        });
+      }
+      return updated;
+    });
+  };
+  const deleteCharacter = async (id: string, options?: { force?: boolean }): Promise<DeleteCharacterResult> => {
+    const target = characters.find(c => c.id === id);
+    // 主动消息 2.0 的任务活在用户自己的 worker 上，不随本地角色删除消失：留着的话
+    // 到点照样跑一整轮生成 + 推送，用户会收到一个已经删掉的角色发来的消息（还每次
+    // 真烧一轮 LLM）。本地记录一删就再没有 uuid 可取消，所以必须赶在删除之前清。
+    // 没排过任务的角色不发任何请求。
+    const localTaskUuids = (target?.activeMsg2Config?.tasks ?? [])
+      .map(t => t.taskUuid);
+
+    // 云端善后挡在本地删除**前面**：早前丢后台跑的版本在断网 / 秒关 App 时根本跑不完，
+    // 任务残留下来，之后「已删角色」的推送还会弹出来。名下真有任务（本地清单有、或远端
+    // 查得到）的角色才付这次等待，清不掉就先不删本地、把选择权交回给调用方；
+    // 从没配过 2.0 或没填 worker 地址的角色一个请求都不发，路径跟原来一样快。
+    if (!options?.force && charMayHaveCloudState(target)) {
+      let workerConfigured = false;
+      try {
+        workerConfigured = Boolean((await ActiveMsgStore.getGlobalConfig()).workerUrl?.trim());
+      } catch { /* 配置读不到按没配处理，与 purgeCharCloudState 同口径 */ }
+
+      if (workerConfigured) {
+        // 有没有任务以远端清单优先（cancelAllTasksForChar 内部先查远端、查不到才退回
+        // 本地清单）——只看本地会漏掉排程记录丢失的幽灵任务。
+        let hadTasks = localTaskUuids.length > 0;
+        let cleanupFailed = false;
+        try {
+          const { targets, failed } = await ActiveMsgClient.cancelAllTasksForChar(id, localTaskUuids);
+          hadTasks = hadTasks || targets.length > 0;
+          cleanupFailed = failed.size > 0;
+        } catch (err) {
+          console.warn('[deleteCharacter] 远端主动消息任务清理失败', err);
+          cleanupFailed = true;
+        }
+
+        if (hadTasks) {
+          if (!cleanupFailed) {
+            // 任务取消掉了，云端还留着这个角色的 client_state —— 那里面是完整的角色系统
+            // 提示词加最近 30 条对话原文（fire_pack）。删除确认框写的是「记忆将被清空」，
+            // 那就得连云端那份一起清，不然聊天记录会一直躺在 D1 里、每删一个角色再堆一份。
+            const cloudCleanup = await purgeCharCloudState(target);
+            if (cloudCleanup.status === 'failed') {
+              console.warn('[deleteCharacter] 云端状态清理失败', cloudCleanup.error);
+              cleanupFailed = true;
+            }
+          }
+          if (cleanupFailed) {
+            // 云端没清干净：本地先不删。调用方（角色 App）负责弹「重试 / 仍然删除」。
+            return { status: 'cloud-cleanup-failed' };
+          }
+        } else {
+          // 名下没有任务：不会再有推送，client_state 清理维持旧节奏丢后台，不挡删除。
+          void (async () => {
+            const cloudCleanup = await purgeCharCloudState(target);
+            if (cloudCleanup.status === 'failed') {
+              console.warn('[deleteCharacter] 云端状态清理失败（角色照常删除）', cloudCleanup.error);
+              addToast('ta 在云端的聊天上下文没能清掉，可以去设置里「清除云端状态」兜一下', 'error');
+            }
+          })();
+        }
+      }
+    } else if (options?.force && charMayHaveCloudState(target)) {
+      // 「仍然删除」放行后仍旧尽力清一次：能清掉多少算多少，失败只提示、不再拦。
+      void (async () => {
+        try {
+          if (localTaskUuids.length > 0) {
+            const { failed } = await ActiveMsgClient.cancelAllTasksForChar(id, localTaskUuids);
+            if (failed.size > 0) {
+              addToast(`ta 还有 ${failed.size} 个主动消息任务留在远端没取消掉，可能仍会到点推送——可以去设置里「清除云端状态」兜一下`, 'error');
+            }
+          }
+          const cloudCleanup = await purgeCharCloudState(target);
+          if (cloudCleanup.status === 'failed') {
+            console.warn('[deleteCharacter] 云端状态清理失败（角色照常删除）', cloudCleanup.error);
+            addToast('ta 在云端的聊天上下文没能清掉，可以去设置里「清除云端状态」兜一下', 'error');
+          }
+        } catch (err) {
+          console.warn('[deleteCharacter] 远端主动消息任务清理失败', err);
+          addToast('ta 的主动消息任务没能在远端取消，可能仍会到点推送，请检查 Worker 连接', 'error');
+        }
+      })();
+    }
+
     setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; });
     await DB.deleteCharacter(id);
     // 表情分类不随角色级联删除会留下「幽灵专属包」：单聊面板被可见性过滤掉（删不掉），
@@ -2636,6 +3017,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     } catch (err) {
         console.warn('[deleteCharacter] 表情包残留清理失败（不影响角色删除）', err);
     }
+    return { status: 'deleted' };
   };
 
   // 角色分组方法（神经链接"文件夹"）
@@ -2673,16 +3055,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   // Group Methods
+
+  // 群的名字和成员名单都会进每个成员的 fire_pack（角色知道自己在哪些群、群里都有谁），
+  // 群一变就要让受影响的成员各刷一次云端快照，否则角色到点还按旧群名 / 旧成员说话。
+  // nextGroups 传变更后的完整 groups 列表：markDirty 存的是快照，拿旧列表等于没改。
+  const markGroupMembersDirty = (memberIds: string[], nextGroups: GroupProfile[]) => {
+      for (const memberId of new Set(memberIds)) {
+          const member = characters.find(c => c.id === memberId);
+          if (member) markAmsgStateDirty({ char: member, userProfile, groups: nextGroups, realtimeConfig });
+      }
+  };
+
   const createGroup = async (name: string, members: string[]) => {
       const newGroup: GroupProfile = {
           id: `group-${Date.now()}`,
           name,
           members,
-          avatar: generateAvatar(name), 
+          avatar: generateAvatar(name),
           createdAt: Date.now()
       };
       await DB.saveGroup(newGroup);
       setGroups(prev => [...prev, newGroup]);
+      markGroupMembersDirty(newGroup.members, [...groups, newGroup]);
   };
 
   const updateGroup = async (id: string, updates: Partial<GroupProfile>) => {
@@ -2693,12 +3087,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // React 不保证 updater 同步执行（eager 求值只是优化），旧写法会时而拿到旧值、
       // 时而整个跳过 saveGroup，表现为"内存已更新、退出重进设置丢失"。
       const base = groups.find(g => g.id === id);
-      if (base) await DB.saveGroup({ ...base, ...updates });
+      if (!base) return;
+      const nextGroup = { ...base, ...updates };
+      await DB.saveGroup(nextGroup);
+      // 老成员也要打脏：被移出群的角色，他那份快照里的群名单同样得把这个群去掉。
+      markGroupMembersDirty(
+          [...base.members, ...nextGroup.members],
+          groups.map(g => g.id === id ? nextGroup : g),
+      );
   };
 
   const deleteGroup = async (id: string) => {
+      const removed = groups.find(g => g.id === id);
       await DB.deleteGroup(id);
       setGroups(prev => prev.filter(g => g.id !== id));
+      if (removed) markGroupMembersDirty(removed.members, groups.filter(g => g.id !== id));
   };
 
   // Worldbook Methods
@@ -2737,7 +3140,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           : m
                   );
                   const newChar = { ...char, mountedWorldbooks: newMounted };
-                  DB.saveCharacter(newChar);
+                  // 这条落库绕开了 updateCharacter，得自己打脏：世界书正文进 fire_pack 的系统
+                  // 提示词，不刷的话角色到点还照着改之前的设定说话。
+                  DB.saveCharacter(newChar).then(() => {
+                      markAmsgStateDirty({ char: newChar, userProfile, groups, realtimeConfig });
+                  });
                   return newChar;
               }
               return char;
@@ -2756,7 +3163,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (char.mountedWorldbooks?.some(m => m.id === id)) {
               const newMounted = char.mountedWorldbooks.filter(m => m.id !== id);
               const newChar = { ...char, mountedWorldbooks: newMounted };
-              DB.saveCharacter(newChar);
+              // 同 updateWorldbook：绕开 updateCharacter 的落库要自己打脏，否则云端提示词
+              // 里还挂着这本已经删掉的世界书。
+              DB.saveCharacter(newChar).then(() => {
+                  markAmsgStateDirty({ char: newChar, userProfile, groups, realtimeConfig });
+              });
               return newChar;
           }
           return char;
@@ -2822,6 +3233,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           setUserProfile(nextDefault);
           setCharacterUserProfileBindings(nextDefault.characterUserProfileBindings || {});
           DB.saveUserProfile(nextDefault);
+          markAmsgStateDirtyForAll({ characters, userProfile: nextDefault, groups, realtimeConfig });
           return nextProfiles;
       });
   };
@@ -2938,7 +3350,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       else await DB.deleteAsset(`icon_${appId}`);
   };
   const addToast = (message: string, type: Toast['type'] = 'info', duration = 3000, onClick?: () => void) => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type, onClick }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, duration); };
-  const showError = (title: string, details: string) => { setErrorDialog({ title, details }); };
+  const showError = (title: string, details: string) => {
+      setErrorDialog({ title, details });
+      // showError 是分发型入口，title 由调用方传。这里写显式白名单：
+      // 只有下面这三个写死的 title 会上报，其它（含以后新加的）一律不发，
+      // 也绝不把 title 原样透传出去（免得哪天有人往里塞 URL 或报错原文）。
+      if (title === 'Instant Push 发送失败') trackEvent('弹出报错详情弹窗', { 报错来源: 'Instant Push 发送失败' });
+      else if (title === '导入失败') trackEvent('弹出报错详情弹窗', { 报错来源: '导入失败' });
+      else if (title === '云端恢复失败') trackEvent('弹出报错详情弹窗', { 报错来源: '云端恢复失败' });
+  };
   const dismissError = () => { setErrorDialog(null); };
 
   // --- APPEARANCE PRESETS ---
@@ -3217,7 +3637,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
                   const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
                   const base64Data = value.split(',')[1];
-                  assetsFolder?.file(filename, base64Data, { base64: true });
+                  // JPEG/PNG/WebP/GIF 本身已压缩，再跑 DEFLATE 只会浪费手机 CPU；直接存储。
+                  assetsFolder?.file(filename, base64Data, { base64: true, compression: 'STORE' });
                   const path = `assets/${filename}`;
                   assetDedupMap.set(value, path);
                   return path;
@@ -3256,7 +3677,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 角色身上的 groupId 指向这张表，漏导会让导入端全员回落「未分组」
               'characters', 'character_groups', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery',
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
-              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
+              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'story_theaters', 'story_theater_presets', 'story_theater_masks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
               'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
@@ -3420,6 +3841,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               })() : undefined,
               bm25Mode: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('bm25_mode') || undefined) : undefined,
               lastActiveCharId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('os_last_active_char_id') || undefined) : undefined,
+              storyTheaterAppearance: (mode === 'text_only' || mode === 'full') ? exportStoryTheaterAppearanceSetting() : undefined,
               eventNotifFlags: (mode === 'text_only' || mode === 'full') ? (() => {
                   const flags: Record<string, string> = {};
                   for (let i = 0; i < localStorage.length; i++) {
@@ -3440,6 +3862,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               worldHomeLocal: (mode === 'text_only' || mode === 'full') ? exportWorldHomeLocal() : undefined,
               luckinLocal: (mode === 'text_only' || mode === 'full') ? exportLuckinLocal() : undefined,
               mcdLocal: (mode === 'text_only' || mode === 'full') ? exportMcdLocal() : undefined,
+              mcpLocal: (mode === 'text_only' || mode === 'full') ? exportMcpLocal() : undefined,
 
               // 梦境盲盒收藏册（账号级 localStorage，不挂在角色上，需单独随备份带走）
               dreamCollection: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_dream_collection'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
@@ -3521,6 +3944,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'room_plates', 'digest_reports',
               'bank_transactions', 'scheduled_messages', 'memory_batches', 'hotnews_snapshots',
               'character_groups',
+              'story_theaters', 'story_theater_presets',
               'life_records', 'med_plans', 'life_record_settings'
           ]);
 
@@ -3538,6 +3962,74 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return result;
           };
 
+          // 纯文字备份的低内存路径：store 通过单事务 IDB 游标逐条读取，剥图后立即序列化进 ZIP 分片，
+          // 不再 getAll 整表驻留。gallery/messages 中即使有大量 base64 图片，峰值也只是一条记录。
+          const textOnlyFieldByStore: Record<string, string> = {
+              characters: 'characters',
+              character_groups: 'characterGroups',
+              messages: 'messages',
+              themes: 'customThemes',
+              emojis: 'savedEmojis',
+              emoji_categories: 'emojiCategories',
+              gallery: 'galleryImages',
+              diaries: 'diaries',
+              tasks: 'tasks',
+              anniversaries: 'anniversaries',
+              room_todos: 'roomTodos',
+              room_notes: 'roomNotes',
+              groups: 'groups',
+              journal_stickers: 'savedJournalStickers',
+              social_posts: 'socialPosts',
+              courses: 'courses',
+              games: 'games',
+              worldbooks: 'worldbooks',
+              story_theaters: 'storyTheaters',
+              story_theater_presets: 'storyTheaterPresets',
+              story_theater_masks: 'storyTheaterMasks',
+              novels: 'novels',
+              songs: 'songs',
+              bank_transactions: 'bankTransactions',
+              xhs_activities: 'xhsActivities',
+              xhs_stock: 'xhsStockImages',
+              quizzes: 'quizSessions',
+              guidebook: 'guidebookSessions',
+              scheduled_messages: 'scheduledMessages',
+              handbook: 'handbooks',
+              trackers: 'trackers',
+              tracker_entries: 'trackerEntries',
+              hotnews_snapshots: 'hotNewsSnapshots',
+              memory_nodes: 'memoryNodes',
+              memory_links: 'memoryLinks',
+              topic_boxes: 'topicBoxes',
+              anticipations: 'anticipations',
+              event_boxes: 'eventBoxes',
+              room_plates: 'roomPlates',
+              digest_reports: 'digestReports',
+              daily_schedule: 'dailySchedules',
+              memory_batches: 'memoryBatches',
+              pixel_home_assets: 'pixelHomeAssets',
+              pixel_home_layouts: 'pixelHomeLayouts',
+              vr_novels: 'vrNovels',
+              vr_annotations: 'vrAnnotations',
+              cc_custom_parts: 'customCreatorParts',
+              vr_letters: 'vrLetters',
+              vr_settings: 'vrSettings',
+              vr_scripts: 'vrScripts',
+              vr_plays: 'vrStagedPlays',
+              vr_presets: 'vrPresets',
+              worlds: 'worlds',
+              world_episodes: 'worldEpisodes',
+              life_records: 'lifeRecords',
+              med_plans: 'medPlans',
+              life_record_settings: 'lifeRecordSettings',
+          };
+          const prewrittenStores: BackupManifest['stores'] = {};
+          const textOnlyShardLimits = {
+              maxLen: 4 * 1024 * 1024,
+              maxItems: 500,
+              hardMaxLen: 256 * 1024 * 1024,
+          };
+
           // 向量二进制旁路（#2）：memory_vectors 归一化拼成 bin + 索引（逻辑在 encodeVectorsForBackup，
           // 那边有 ensureFloat32 统一 Uint8Array / Float32Array / 遗留 number[] 三态），导出收尾交给
           // writeV2Backup 落进 zip——不进 backupData、不当普通数组分片，避开 number[] 进 JSON 的膨胀。
@@ -3550,6 +4042,36 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   message: `正在打包: ${storeName} ...`,
                   progress: (currentStep / totalSteps) * 100
               });
+
+              // 4500+ 条记忆若仍是早期 number[] 存储，getAll 会先在 JS 堆里膨胀成数百 MB。
+              // 两遍游标逐条扫描只常驻最终 Float32 紧凑 bin；格式仍是原来的单 bin + index。
+              if (storeName === 'memory_vectors' && mode === 'text_only') {
+                  vectorPayload = await encodeVectorsForBackupChunked(async (onBatch) => {
+                      await DB.streamRawStoreData(storeName, item => onBatch([item]));
+                  });
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                  continue;
+              }
+
+              // 纯文字模式的普通数组 store：逐条剥图后立刻写分片。这里 continue 后不会再把
+              // processedData 挂到 backupData，因此已处理的整表不会一直留到最终压缩阶段。
+              const textOnlyField = mode === 'text_only' ? textOnlyFieldByStore[storeName] : undefined;
+              if (textOnlyField) {
+                  const writer = createV2ArrayFieldWriter(
+                      zip as unknown as ZipFileWriter,
+                      textOnlyField,
+                      {
+                          limits: textOnlyShardLimits,
+                          onYield: () => new Promise<void>(resolve => setTimeout(resolve, 0)),
+                      },
+                  );
+                  await DB.streamRawStoreData(storeName, (item) => {
+                      const processedItem = noImageStores.has(storeName) ? item : stripBase64(item);
+                      writer.appendSync([processedItem]);
+                  });
+                  prewrittenStores[textOnlyField] = await writer.finish();
+                  continue;
+              }
 
               let rawData = await DB.getRawStoreData(storeName);
               let processedData: any;
@@ -3657,6 +4179,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'courses': backupData.courses = processedData; break;
                   case 'games': backupData.games = processedData; break;
                   case 'worldbooks': backupData.worldbooks = processedData; break;
+                  case 'story_theaters': backupData.storyTheaters = processedData; break;
+                  case 'story_theater_presets': backupData.storyTheaterPresets = processedData; break;
+                  case 'story_theater_masks': backupData.storyTheaterMasks = processedData; break;
                   case 'novels': backupData.novels = processedData; break;
                   case 'songs': backupData.songs = processedData; break;
                   case 'bank_transactions': backupData.bankTransactions = processedData; break;
@@ -3714,9 +4239,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是
-          // 卡在 95% 干等。level 9 压几十 MB 数据可能要好几秒。
-          setSysOperation({ status: 'processing', message: '正在生成压缩包（最高压缩级别）...', progress: 70 });
+          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是卡在 95% 干等。
+          // text_only 用 level 6；媒体/全量仍用 level 9，具体见 generateAsync 配置。
+          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 70 });
 
           // --- v2 分片序列化（替代老的单根 data.json）---
           // 不再把所有数据拼成一根 data.json：单根字符串逼近 ~512M 会确定性 RangeError。
@@ -3732,6 +4257,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   createdAt: Date.now(),
                   assetCount,
                   vectors: vectorPayload,
+                  prewrittenStores,
                   onYield: () => new Promise<void>(r => setTimeout(r, 0)),
               },
           );
@@ -3740,7 +4266,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 条从 70% 平滑爬到 99%，用户能确切看到"在动"。
           let lastReportedPercent = -10;
           const content = await zip.generateAsync(
-              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
+              {
+                  type: "blob",
+                  streamFiles: true,
+                  compression: "DEFLATE",
+                  // 纯文字备份优先手机稳定性；6 级体积差很小，但比 9 级明显省时省内存。
+                  compressionOptions: { level: mode === 'text_only' ? 6 : 9 },
+              },
               (metadata) => {
                   const p = metadata.percent;
                   if (p - lastReportedPercent >= 5 || p >= 99) {
@@ -4108,6 +4640,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           if (typeof data.bm25Mode === 'string') localStorage.setItem('bm25_mode', data.bm25Mode);
           if (typeof data.lastActiveCharId === 'string') localStorage.setItem('os_last_active_char_id', data.lastActiveCharId);
+          restoreStoryTheaterAppearanceSetting(data.storyTheaterAppearance);
           if (data.dreamCollection && typeof data.dreamCollection === 'object') localStorage.setItem('os_dream_collection', JSON.stringify(data.dreamCollection));
           if (typeof data.gotchiAccentHue === 'string' && /^\d+$/.test(data.gotchiAccentHue)) localStorage.setItem('tama_accent_hue', data.gotchiAccentHue);
           if (data.eventNotifFlags && typeof data.eventNotifFlags === 'object') {
@@ -4171,7 +4704,30 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               setAppearancePresets(loadedPresets);
           }
 
-          if (chars.length > 0) setCharacters(chars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c))));
+          // 导入后的角色清单（下面主动消息 2.0 对账要用规范化之后的那份）
+          let importedChars = chars;
+          if (chars.length > 0) {
+              let importedAutoContextCount = 0;
+              let importedContextMigrated = false;
+              const normalizedChars = chars.map(c => {
+                  const normalized = normalizeCharacterDefaults(normalizeCharacterImpression(c));
+                  const migration = migrateCharacterContextRange(normalized);
+                  if (migration.migrated) importedContextMigrated = true;
+                  if (migration.resetAutoContext) importedAutoContextCount++;
+                  return migration.character;
+              });
+              if (importedContextMigrated) {
+                  await Promise.all(normalizedChars.map(c => DB.saveCharacter(c)));
+              }
+              setCharacters(normalizedChars);
+              importedChars = normalizedChars;
+              if (importedAutoContextCount > 0) {
+                  setTimeout(() => addToast(
+                      `导入的旧设置已升级：${importedAutoContextCount} 个全自动记忆角色已使用自适应上下文。`,
+                      'info',
+                  ), 600);
+              }
+          }
           if (groupsList.length > 0) setGroups(groupsList);
           if (themes.length > 0) setCustomThemes(themes);
           const profiles = await DB.getUserProfiles();
@@ -4183,7 +4739,36 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (books.length > 0) setWorldbooks(books);
           if (novelList.length > 0) setNovels(novelList);
           if (songList.length > 0) setSongs(songList);
-          
+
+          // ─── 主动消息 2.0：导入后跟云端对一次账 ───
+          // 导入换掉了整套角色，worker 那边却还停在导入前：旧档角色的远端任务变成无主任务
+          // 到点照样推送，新档角色的 fire_pack 和工具凭据则停格在导入前那一刻。
+          // 整段 best-effort：这是恢复流程的收尾，云端够不着不该让已经写好的本地数据回滚。
+          try {
+              const amsgWorkerUrl = (await ActiveMsgStore.getGlobalConfig()).workerUrl?.trim();
+              if (amsgWorkerUrl) {
+                  const knownCharIds = new Set(importedChars.map(c => c.id));
+                  const remoteTasks = await ActiveMsgClient.listAllTasks();
+                  for (const task of remoteTasks) {
+                      if (typeof task?.uuid !== 'string') continue;
+                      const owner = typeof task?.charId === 'string' ? task.charId : '';
+                      if (owner && knownCharIds.has(owner)) continue;
+                      // 「导入即放弃旧数据」：这条任务的主人在新档里已经不存在了（连主人是谁
+                      // 都没投影出来的同理），它正属于该一起放弃的部分，取消就是对的。
+                      await ActiveMsgClient.cancelTask(task.uuid).catch(() => {});
+                  }
+                  // 留下来的角色逐个刷云端快照，同时把导入进来的实时感知凭据传上去。
+                  // 走同一个入口：云端提示词是按凭据裁过的，两者必须同进同退。
+                  // 有 AI 任务的角色才会真的上传（门在 markAmsgStateDirty 里）。
+                  syncAmsgToolConfigAndPrompts(
+                      data.realtimeConfig || realtimeConfig,
+                      { characters: importedChars, userProfile: user || userProfile, groups: groupsList },
+                  );
+              }
+          } catch (e) {
+              console.warn('[amsg2] 导入后云端对账失败（本地数据已恢复，不受影响）', e);
+          }
+
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           clearImportInProgress();
           addToast('恢复成功，系统即将重启...', 'success');
@@ -4301,6 +4886,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setAvailableModels,
     apiPresets,
     addApiPreset,
+    updateApiPreset,
     removeApiPreset,
     realtimeConfig,
     updateRealtimeConfig,

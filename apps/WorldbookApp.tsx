@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useOS } from '../context/OSContext';
 import { AppID, Worldbook, WorldbookDepthRole, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
 import Modal from '../components/os/Modal';
-import { DiamondsFour, BookOpen, DownloadSimple, UploadSimple, WarningCircle, MagnifyingGlass, X, Check } from '@phosphor-icons/react';
+import { Check, DiamondsFour, BookOpen, DownloadSimple, Trash, UploadSimple, WarningCircle, X, MagnifyingGlass } from '@phosphor-icons/react';
 import {
     analyzeWorldbookDuplicates,
     buildWorldbookDedupeAiApiChoices,
@@ -69,6 +69,7 @@ const DEDUPE_AI_RELATION_STYLES: Record<WorldbookDuplicateAiRelation, string> = 
     conflict: 'bg-violet-50 text-violet-600 border-violet-100',
     unrelated: 'bg-slate-50 text-slate-500 border-slate-100',
 };
+import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
     const { closeApp, openApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets, availableModels, setAvailableModels } = useOS();
@@ -95,6 +96,9 @@ const WorldbookApp: React.FC = () => {
     const dedupeTask = useWorldbookDedupTask();
     const isDedupeAiReviewing = dedupeTask.status === 'running';
     const dedupeAiResult = dedupeTask.status === 'done' ? dedupeTask.aiResult : null;
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
+    const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
 
     const PAGE_SIZE = 12;
 
@@ -193,6 +197,7 @@ const WorldbookApp: React.FC = () => {
         setTempWholeWords(false);
         setShowCategoryPicker(false);
         setIsEditing(true);
+        trackEvent('打开世界书编辑页', { mode: 'create' });
     };
 
     const handleEdit = (book: Worldbook) => {
@@ -216,6 +221,7 @@ const WorldbookApp: React.FC = () => {
         setTempWholeWords(book.matchWholeWords === true);
         setShowCategoryPicker(false);
         setIsEditing(true);
+        trackEvent('打开世界书编辑页', { mode: 'edit' });
     };
 
     const handleSave = async () => {
@@ -310,6 +316,7 @@ const WorldbookApp: React.FC = () => {
         });
         const verb = result === 'shared' ? '已调起分享' : '已导出';
         addToast(`${verb}「${category}」共 ${books.length} 条`, 'success');
+        trackEvent('导出分组为标准世界书');
     };
 
     const requestDelete = (e: React.MouseEvent, book: Worldbook) => {
@@ -326,6 +333,35 @@ const WorldbookApp: React.FC = () => {
             setEditingBook(null);
             setIsEditing(false);
         }
+    };
+
+    const leaveSelectionMode = () => {
+        setIsSelecting(false);
+        setSelectedBookIds(new Set());
+    };
+
+    const toggleBookSelection = (id: string) => {
+        setSelectedBookIds(current => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        setSelectedBookIds(current => current.size === worldbooks.length
+            ? new Set()
+            : new Set(worldbooks.map(book => book.id)));
+    };
+
+    const confirmBulkDelete = async () => {
+        const ids = [...selectedBookIds];
+        if (ids.length === 0) return;
+        for (const id of ids) await deleteWorldbook(id);
+        setShowBulkDeleteConfirm(false);
+        leaveSelectionMode();
+        addToast(`已删除 ${ids.length} 条世界书条目`, 'success');
     };
 
     const toggleCategory = (cat: string) => {
@@ -777,7 +813,11 @@ const WorldbookApp: React.FC = () => {
                                 <label className="text-xs font-bold text-slate-500 mb-2 block">注入位置</label>
                                 <select
                                     value={tempPosition}
-                                    onChange={e => setTempPosition(Number(e.target.value) as WorldbookPosition)}
+                                    onChange={e => {
+                                        const nextPosition = Number(e.target.value) as WorldbookPosition;
+                                        setTempPosition(nextPosition);
+                                        trackEvent('切换世界书注入位置', { position: nextPosition });
+                                    }}
                                     className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
                                 >
                                     {(Object.entries(WORLDBOOK_POSITION_LABELS) as [string, string][]).map(([value, label]) => (
@@ -886,6 +926,20 @@ const WorldbookApp: React.FC = () => {
                             <DiamondsFour size={18} className="text-indigo-500" /> 世界书
                         </span>
                         <div className="flex items-center gap-2">
+                            {worldbooks.length > 0 && (
+                                <button
+                                    onClick={() => {
+                                        if (isSelecting) { leaveSelectionMode(); return; }
+                                        setIsSelecting(true);
+                                        trackEvent('进入批量管理模式');
+                                    }}
+                                    className={`h-9 px-3 rounded-full border text-xs font-bold shadow-sm flex items-center gap-1.5 active:scale-90 transition-all ${isSelecting ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-white/80 text-indigo-500 border-white'}`}
+                                    title={isSelecting ? '退出批量管理' : '批量管理世界书'}
+                                >
+                                    {isSelecting ? <X size={15} weight="bold" /> : <Check size={15} weight="bold" />}
+                                    {isSelecting ? '取消' : '管理'}
+                                </button>
+                            )}
                             <input ref={importRef} type="file" className="hidden" onChange={handleImport} />
                             <button
                                 onClick={toggleDedupeMode}
@@ -896,7 +950,7 @@ const WorldbookApp: React.FC = () => {
                                 <span className="text-[11px] font-bold">去重</span>
                             </button>
                             <button
-                                onClick={() => setShowImportConfirm(true)}
+                                onClick={() => { setShowImportConfirm(true); trackEvent('打开导入世界书弹窗'); }}
                                 className="w-9 h-9 bg-white/80 text-indigo-500 border border-white rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform"
                                 title="导入标准世界书"
                             >
@@ -909,6 +963,28 @@ const WorldbookApp: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {isSelecting && (
+                <div className="relative z-10 shrink-0 bg-white/90 backdrop-blur-xl border-b border-indigo-100 px-5 py-2.5 flex items-center gap-3 shadow-sm">
+                    <button
+                        onClick={toggleSelectAll}
+                        className="flex items-center gap-2 text-xs font-bold text-indigo-600 active:scale-95 transition-transform"
+                    >
+                        <span className={`w-5 h-5 rounded-md border flex items-center justify-center ${selectedBookIds.size === worldbooks.length ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-white border-slate-300 text-transparent'}`}>
+                            <Check size={13} weight="bold" />
+                        </span>
+                        {selectedBookIds.size === worldbooks.length ? '取消全选' : '全选'}
+                    </button>
+                    <span className="text-[11px] text-slate-400">已选 {selectedBookIds.size} / {worldbooks.length}</span>
+                    <button
+                        onClick={() => setShowBulkDeleteConfirm(true)}
+                        disabled={selectedBookIds.size === 0}
+                        className="ml-auto px-3 py-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-red-200 active:scale-95 transition-all disabled:opacity-40 disabled:shadow-none"
+                    >
+                        <Trash size={14} weight="bold" /> 删除
+                    </button>
+                </div>
+            )}
 
             {/* Content List */}
             <div className="flex-1 overflow-y-auto p-5 pb-24 space-y-4 no-scrollbar relative z-0">
@@ -1287,7 +1363,7 @@ const WorldbookApp: React.FC = () => {
                                 <div key={book.id} className="bg-white/60 backdrop-blur-md rounded-2xl border border-white/60 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
                                     {/* Item Header */}
                                     <div 
-                                        onClick={() => dedupeMode ? toggleDedupeSelection(book.id) : togglePreview(book.id)}
+                                        onClick={() => dedupeMode ? toggleDedupeSelection(book.id) : isSelecting ? toggleBookSelection(book.id) : togglePreview(book.id)}
                                         className="p-4 cursor-pointer flex gap-3 justify-between items-start"
                                     >
                                         {dedupeMode && (
@@ -1300,6 +1376,11 @@ const WorldbookApp: React.FC = () => {
                                             >
                                                 <Check size={13} weight="bold" />
                                             </button>
+                                        )}
+                                        {isSelecting && (
+                                            <span className={`w-5 h-5 mt-0.5 mr-3 shrink-0 rounded-md border flex items-center justify-center transition-colors ${selectedBookIds.has(book.id) ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-white border-slate-300 text-transparent'}`}>
+                                                <Check size={13} weight="bold" />
+                                            </span>
                                         )}
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
@@ -1319,7 +1400,7 @@ const WorldbookApp: React.FC = () => {
                                             </div>
                                         </div>
                                         
-                                        {!dedupeMode && (
+                                        {!dedupeMode && !isSelecting && (
                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleEdit(book); }} 
@@ -1406,6 +1487,28 @@ const WorldbookApp: React.FC = () => {
                     <p className="text-center leading-6">
                         请注意，如果导入的不是您的作品，请确定该世界书的作者允许该世界书用于免费小手机。
                     </p>
+                </div>
+            </Modal>
+
+            <Modal
+                isOpen={showBulkDeleteConfirm}
+                title="批量删除确认"
+                onClose={() => setShowBulkDeleteConfirm(false)}
+                footer={
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setShowBulkDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform">取消</button>
+                        <button onClick={confirmBulkDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 active:scale-95 transition-transform">删除 {selectedBookIds.size} 条</button>
+                    </div>
+                }
+            >
+                <div className="text-center py-4 text-sm text-slate-600 flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-1">
+                        <Trash size={24} weight="bold" />
+                    </div>
+                    <div>
+                        确定要删除选中的 <span className="font-bold text-slate-900">{selectedBookIds.size}</span> 条世界书吗？
+                        <br/><span className="text-xs text-red-400 opacity-80 mt-1 block">将同时从已挂载的角色中移除，且无法撤销。</span>
+                    </div>
                 </div>
             </Modal>
 

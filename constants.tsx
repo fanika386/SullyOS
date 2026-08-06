@@ -145,4 +145,10 @@ export const getAppConfig = (appId: AppID): AppConfig | undefined =>
 
 export const INSTALLED_APPS: AppConfig[] = APP_CATALOG.filter(app => isAppVisible(app.id));
 
+// 桌面上没有图标、但仍能从别处进去的 App。使用统计要靠这份补上中文名——
+// 只查 INSTALLED_APPS 的话这些 App 会被静默漏掉（比如「家园」是从小小窝进的）。
+export const HIDDEN_APP_NAMES: Partial<Record<AppID, string>> = {
+  [AppID.WorldHome]: '家园',
+};
+
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

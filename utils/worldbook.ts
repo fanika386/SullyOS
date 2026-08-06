@@ -544,7 +544,20 @@ const jaccardSimilarity = (a: Set<string>, b: Set<string>): number => {
 const splitComparablePassages = (content: string): ComparablePassage[] => {
     const rawPassages = content
         .slice(0, COMPARISON_MAX_TEXT_CHARS)
-        .split(/[\n\r]+|(?<=[。！？!?；;])/u)
+        .split(/[\n\r]+/)
+        .flatMap(line => {
+            const parts: string[] = [];
+            let acc = '';
+            for (const ch of line) {
+                acc += ch;
+                if ('。！？!?；;'.includes(ch)) {
+                    parts.push(acc);
+                    acc = '';
+                }
+            }
+            if (acc) parts.push(acc);
+            return parts;
+        })
         .map(item => item.trim())
         .filter(item => normalizeComparableText(item).length >= 8)
         .slice(0, COMPARISON_MAX_PASSAGES);

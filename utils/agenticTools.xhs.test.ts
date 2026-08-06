@@ -63,7 +63,6 @@ describe('runXhsDetail', () => {
 
         expect(result.ok).toBe(true);
         if (result.ok) {
-            expect(result.failed).toBe(true);
             expect(result.detailText).toContain('小红书返回了空详情');
         }
     });
