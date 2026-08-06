@@ -52,7 +52,7 @@ import { AMSG2_TOOLS, AMSG2_TOOL_NAMES, createAmsg2ToolSession, executeAmsg2Tool
 import { shouldSendThinkingParams } from '../utils/thinkingGate';
 import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
 import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply';
-import { announceChatGen, CHAT_GEN_EVENTS } from '../utils/chatGenEvents';
+import { announceChatGen, CHAT_GEN_EVENTS, isChatReplyActive } from '../utils/chatGenEvents';
 import { shouldRequestAmbient, buildAmbientEvalSection } from '../utils/roomAmbient';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import {
@@ -458,7 +458,31 @@ export const useChatAI = ({
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
     const music = useMusic();
 
-    const [isTyping, setIsTyping] = useState(false);
+    // 初始值不写死 false：Chat 切走会真卸载，但 triggerAI 的生成闭包仍会跑完并落库。
+    // 模块级注册表（utils/chatGenEvents）记住「谁在回复」，重挂载时据此恢复打字灯，
+    // 避免用户切回聊天页看到"没在回复"的假象、误点 ⚡ 造成重复回复。
+    const [isTyping, setIsTyping] = useState<boolean>(() => !!char?.id && isChatReplyActive(char.id));
+
+    // 订阅全局 reply start/end 事件，保持 isTyping 与真实生成状态同步。切角色时
+    // 先按新角色的注册表状态复位（否则 A 还在回复时切到 B，B 的页内会误亮打字灯）。
+    useEffect(() => {
+        if (!char?.id) return;
+        const charId = char.id;
+        const onReplyStart = (e: Event) => {
+            if ((e as CustomEvent).detail?.charId === charId) setIsTyping(true);
+        };
+        const onReplyEnd = (e: Event) => {
+            if ((e as CustomEvent).detail?.charId === charId) setIsTyping(false);
+        };
+        // 兜底同步：事件可能在 effect 挂载前已派发（切回页面重挂载 / Chat 内切角色）。
+        setIsTyping(isChatReplyActive(charId));
+        window.addEventListener(CHAT_GEN_EVENTS.replyStart, onReplyStart);
+        window.addEventListener(CHAT_GEN_EVENTS.replyEnd, onReplyEnd);
+        return () => {
+            window.removeEventListener(CHAT_GEN_EVENTS.replyStart, onReplyStart);
+            window.removeEventListener(CHAT_GEN_EVENTS.replyEnd, onReplyEnd);
+        };
+    }, [char?.id]);
     // 流式预览气泡：stream 开启时，已完成行与安全尾句随增量以临时气泡上屏。
     // 流结束后由 applyAssistantPostProcessing 正常落库渲染，预览随即清空 —— 只影响体感，不改持久化。
     const [streamingBubbles, setStreamingBubbles] = useState<string[]>([]);

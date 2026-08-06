@@ -27,6 +27,8 @@ interface ChatHeaderShellProps {
     extraAction?: { label: string; icon: React.ReactNode; onClick: () => void };
     /** 触发按钮图标：生成中想显示"停止"时传 'stop'。不传 = 原行为（闪电） */
     triggerIcon?: 'lightning' | 'stop';
+    /** 禁用触发按钮（私聊生成中置灰，防止误点重复触发；群聊用 stop 语义不传）。 */
+    triggerDisabled?: boolean;
     isEmotionEvaluating?: boolean;
     isInstantSending?: boolean;
     isMemoryPalaceProcessing?: boolean;
@@ -83,6 +85,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     statusText,
     extraAction,
     triggerIcon = 'lightning',
+    triggerDisabled = false,
     hideBuffs = false,
     headerStyle = 'default',
     avatarShape = 'circle',
@@ -428,7 +431,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderCenteredInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                    <button onClick={onTriggerAI} disabled={triggerDisabled} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass} ${triggerDisabled ? 'opacity-40 cursor-not-allowed' : ''}`} title={triggerDisabled ? '正在回复中…' : (triggerIcon === 'stop' ? '停止生成' : '触发 AI')}>
                         {triggerIconNode}
                     </button>
                     {extraAction && (
@@ -453,7 +456,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             {extraAction.icon}
                         </button>
                     )}
-                    <button onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                    <button onClick={onTriggerAI} disabled={triggerDisabled} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass} ${triggerDisabled ? 'opacity-40 cursor-not-allowed' : ''}`} title={triggerDisabled ? '正在回复中…' : (triggerIcon === 'stop' ? '停止生成' : '触发 AI')}>
                         {triggerIconNode}
                     </button>
                 </div>

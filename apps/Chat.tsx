@@ -3262,6 +3262,7 @@ const Chat: React.FC = () => {
                 memoryPalaceStatusText={memoryPalaceStatus}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
+                triggerDisabled={isTyping}
                 onClose={closeApp}
                 onTriggerAI={handleManualTrigger}
                 onShowCharsPanel={() => setShowPanel('chars')}

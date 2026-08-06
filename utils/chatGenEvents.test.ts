@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     announceChatGen,
     CHAT_GEN_EVENTS,
+    getActiveReplyCharIds,
+    isChatReplyActive,
+    REPLY_GEN_TTL_MS,
     setChatViewSnapshot,
     getChatViewSnapshot,
 } from './chatGenEvents';
@@ -10,6 +13,13 @@ import {
 // SSR 环境也会被调用，不能因为广播而抛错拖垮主流程）。
 
 describe('chatGenEvents', () => {
+    beforeEach(() => {
+        // 清掉上一个用例可能残留的注册表状态
+        for (const charId of getActiveReplyCharIds()) {
+            announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId, charName: '' });
+        }
+    });
+
     it('无 window 时 announceChatGen 不抛错', () => {
         expect(() => announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: 'c1', charName: '小角色' })).not.toThrow();
     });
@@ -27,5 +37,38 @@ describe('chatGenEvents', () => {
         expect(CHAT_GEN_EVENTS.replyArrived).toBe('chat-gen-reply-arrived');
         expect(CHAT_GEN_EVENTS.emotionStart).toBe('chat-gen-emotion-start');
         expect(CHAT_GEN_EVENTS.emotionEnd).toBe('chat-gen-emotion-end');
+    });
+
+    it('replyStart 标记、replyEnd 清除，无 window 也照常维护注册表', () => {
+        expect(isChatReplyActive('c1')).toBe(false);
+
+        announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: 'c1', charName: '小角色' });
+        expect(isChatReplyActive('c1')).toBe(true);
+        expect(getActiveReplyCharIds()).toEqual(['c1']);
+
+        announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: 'c2', charName: '另一个' });
+        expect(isChatReplyActive('c2')).toBe(true);
+        expect(isChatReplyActive('c1')).toBe(true);
+
+        announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId: 'c1', charName: '小角色' });
+        expect(isChatReplyActive('c1')).toBe(false);
+        expect(isChatReplyActive('c2')).toBe(true);
+
+        announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId: 'c2', charName: '另一个' });
+        expect(getActiveReplyCharIds()).toEqual([]);
+    });
+
+    it('reply 超过 TTL 后视为不再活跃（与 ChatBroadcast 兜底同源）', () => {
+        vi.useFakeTimers();
+        try {
+            announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: 'c1', charName: '小角色' });
+            expect(isChatReplyActive('c1')).toBe(true);
+
+            vi.advanceTimersByTime(REPLY_GEN_TTL_MS + 1_000);
+            expect(isChatReplyActive('c1')).toBe(false);
+            expect(getActiveReplyCharIds()).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

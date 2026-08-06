@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { CHAT_GEN_EVENTS, CHAT_VIEW_CHANGED_EVENT, getChatViewSnapshot } from '../utils/chatGenEvents';
+import {
+    CHAT_GEN_EVENTS,
+    CHAT_VIEW_CHANGED_EVENT,
+    EMOTION_GEN_TTL_MS,
+    getChatViewSnapshot,
+    REPLY_GEN_TTL_MS,
+} from '../utils/chatGenEvents';
 
 /**
  * 聊天生成全局横幅（对标彼方的 VRBroadcast，App 根级挂载）。
@@ -20,7 +26,7 @@ type GenKind = 'reply' | 'emotion';
 interface GenEntry { kind: GenKind; charId: string; charName: string; startedAt: number; }
 
 // 兜底过期：主回复对齐 instant 300s 超时 + 本地重试余量；情绪评估对齐 hook 内 90s 安全网
-const TTL_MS: Record<GenKind, number> = { reply: 6 * 60_000, emotion: 2 * 60_000 };
+const TTL_MS: Record<GenKind, number> = { reply: REPLY_GEN_TTL_MS, emotion: EMOTION_GEN_TTL_MS };
 
 const LABEL: Record<GenKind, string> = { reply: '正在回应', emotion: '正在感受' };
 

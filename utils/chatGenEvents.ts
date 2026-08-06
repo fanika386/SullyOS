@@ -34,6 +34,46 @@ export const CHAT_GEN_EVENTS = {
     emotionFailed: 'chat-gen-emotion-failed',
 } as const;
 
+// 模块级「回复进行中」注册表。
+//
+// 背景：Chat 切走是真 unmount，useChatAI 的 isTyping 是组件内 state，重挂载时会
+// 丢失 —— 生成其实还在跑，但页内三个点/⚡ 守卫一起消失，用户切回来会误以为没在
+// 回复，再点 ⚡ 就重复触发。announceChatGen 派发事件时同步维护这份注册表，
+// useChatAI 挂载/切角色时读它恢复 isTyping。TTL 与 ChatBroadcast 的 reply 兜底
+// 对齐（replyEnd 在 finally 里派发正常不会漏，TTL 只是防页面/worker 异常）。
+export const REPLY_GEN_TTL_MS = 6 * 60_000;
+export const EMOTION_GEN_TTL_MS = 2 * 60_000;
+
+interface ActiveReplyEntry {
+    charName: string;
+    startedAt: number;
+}
+
+const activeReplies = new Map<string, ActiveReplyEntry>();
+
+function sweepExpiredReplies(now: number = Date.now()): void {
+    for (const [charId, entry] of activeReplies) {
+        if (now - entry.startedAt >= REPLY_GEN_TTL_MS) activeReplies.delete(charId);
+    }
+}
+
+/** 该角色当前是否有一轮回复生成还在跑（含 Chat 卸载后的后台生成）。 */
+export function isChatReplyActive(charId: string): boolean {
+    const entry = activeReplies.get(charId);
+    if (!entry) return false;
+    if (Date.now() - entry.startedAt >= REPLY_GEN_TTL_MS) {
+        activeReplies.delete(charId);
+        return false;
+    }
+    return true;
+}
+
+/** 当前所有仍在回复中的角色 id（测试/调试用，自动清理过期项）。 */
+export function getActiveReplyCharIds(): string[] {
+    sweepExpiredReplies();
+    return [...activeReplies.keys()];
+}
+
 export interface ChatGenDetail {
     charId: string;
     charName: string;
@@ -42,6 +82,12 @@ export interface ChatGenDetail {
 }
 
 export function announceChatGen(event: string, detail: ChatGenDetail): void {
+    if (event === CHAT_GEN_EVENTS.replyStart) {
+        sweepExpiredReplies();
+        activeReplies.set(detail.charId, { charName: detail.charName, startedAt: Date.now() });
+    } else if (event === CHAT_GEN_EVENTS.replyEnd) {
+        activeReplies.delete(detail.charId);
+    }
     try {
         window.dispatchEvent(new CustomEvent(event, { detail }));
     } catch { /* SSR / 测试环境无 window */ }
