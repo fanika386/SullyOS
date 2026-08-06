@@ -2004,12 +2004,28 @@ const XHSLite = (() => {
   async function search(cookieStr, keyword, { page = 1, sort = 'general' } = {}) {
     const ck = parseCookies(cookieStr);
     const st = SORT_MAP[sort] || 'general';
-    const payload = { keyword, page, page_size: 20, search_id: genSearchId(), sort: st, note_type: 0, ext_flags: [],
-      filters: [{ tags: [st], type: 'sort_type' }, { tags: ['不限'], type: 'filter_note_type' }, { tags: ['不限'], type: 'filter_note_time' }, { tags: ['不限'], type: 'filter_note_range' }, { tags: ['不限'], type: 'filter_pos_distance' }],
-      geo: '', image_formats: IMG_FORMATS };
-    const r = await signedPost(EDITH, '/api/sns/web/v1/search/notes', payload, cookieStr, ck);
-    const items = (r?.data?.items || []).filter((it) => it.id && (it.note_card || it.model_type === 'note'));
-    return { feeds: items.map((item) => normItem(item, 'pc_search')), success: !!r?.success, msg: r?.msg, raw_error: r?.success ? undefined : r };
+    // 一次多翻一页，尽量给角色更多结果（去重；某页不足一页就停）。
+    const seen = new Set();
+    const feeds = [];
+    for (let p = page; p <= page + 1; p++) {
+      const payload = { keyword, page: p, page_size: 20, search_id: genSearchId(), sort: st, note_type: 0, ext_flags: [],
+        filters: [{ tags: [st], type: 'sort_type' }, { tags: ['不限'], type: 'filter_note_type' }, { tags: ['不限'], type: 'filter_note_time' }, { tags: ['不限'], type: 'filter_note_range' }, { tags: ['不限'], type: 'filter_pos_distance' }],
+        geo: '', image_formats: IMG_FORMATS };
+      const r = await signedPost(EDITH, '/api/sns/web/v1/search/notes', payload, cookieStr, ck);
+      if (!r?.success) {
+        if (feeds.length === 0) return { feeds, success: false, msg: r?.msg, raw_error: r };
+        break;
+      }
+      const items = (r?.data?.items || []).filter((it) => it.id && (it.note_card || it.model_type === 'note'));
+      for (const item of items) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id);
+          feeds.push(normItem(item, 'pc_search'));
+        }
+      }
+      if (items.length < 20) break;
+    }
+    return { feeds, success: true };
   }
   async function getFeedDetail(cookieStr, feedId, xsecToken, {
     xsecSource = 'pc_feed',

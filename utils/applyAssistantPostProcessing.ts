@@ -1348,7 +1348,7 @@ export async function applyAssistantPostProcessing(
                 const xhsMessages = [
                     ...fullMessages,
                     { role: 'assistant', content: cleanedForXhs },
-                    { role: 'user', content: `[系统: 你在小红书搜索了"${keyword}"，以下是搜索结果]\n\n${xsr.notesText}\n\n[系统: 你已经看完了搜索结果（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 自然地分享你看到的内容，比如"我刚在小红书搜了一下..."、"诶小红书上有人说..."\n2. 可以评价、吐槽、分享感兴趣的内容\n3. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条；不要手写“[你分享了小红书笔记]”及标题/作者/互动/简介，分享卡片必须使用该标记${xhsCaps.comment ? '\n4. 如果想评论某条笔记，可以用 [[XHS_COMMENT: noteId | 评论内容]]' : ''}${(xhsCaps.like || xhsCaps.favorite) ? '\n5. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏' : ''}\n6. 如果想看某条笔记的完整内容和评论区，可以用 [[XHS_DETAIL: noteId]]\n7. 只准讨论上面真实返回的笔记，不要编造系统没给出的任何笔记、标题、作者或赞数\n8. 严禁再输出[[XHS_SEARCH:...]]标记]` }
+                    { role: 'user', content: `[系统: 你在小红书搜索了"${keyword}"，以下是搜索结果]\n\n${xsr.notesText}\n\n[系统: 你已经看完了搜索结果（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 自然地分享你看到的内容，比如"我刚在小红书搜了一下..."、"诶小红书上有人说..."\n2. 可以评价、吐槽、分享感兴趣的内容\n3. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条；不要手写“[你分享了小红书笔记]”及标题/作者/互动/简介，分享卡片必须使用该标记${xhsCaps.comment ? '\n4. 如果想评论某条笔记，可以用 [[XHS_COMMENT: noteId | 评论内容]]' : ''}${(xhsCaps.like || xhsCaps.favorite) ? '\n5. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏' : ''}\n6. 如果用户想认真了解，或者某条笔记值得细看，请用 [[XHS_DETAIL: noteId]] 打开正文和评论区——不要只凭摘要假装看过全文和评论\n7. 只准讨论上面真实返回的笔记，不要编造系统没给出的任何笔记、标题、作者或赞数\n8. 严禁再输出[[XHS_SEARCH:...]]标记]` }
                 ];
 
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1405,7 +1405,7 @@ export async function applyAssistantPostProcessing(
                 const xhsMessages = [
                     ...fullMessages,
                     { role: 'assistant', content: cleanedForXhs },
-                    { role: 'user', content: `[系统: 你刷了一会儿小红书首页，以下是你看到的内容]\n\n${xbr.notesText}\n\n[系统: 你已经看完了（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 像在跟朋友分享一样，随意聊聊你看到了什么有趣的\n2. 不用全部都提，挑你感兴趣的1-3条聊就行\n3. 可以吐槽、感叹、分享想法\n4. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条；不要手写“[你分享了小红书笔记]”及标题/作者/互动/简介，分享卡片必须使用该标记${xhsCaps.post ? '\n5. 如果想发一条自己的笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]' : ''}${(xhsCaps.like || xhsCaps.favorite) ? '\n6. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏' : ''}\n7. 如果想看某条笔记的完整内容和评论区，可以用 [[XHS_DETAIL: noteId]]\n8. 只准讨论上面真实返回的笔记，不要编造系统没给出的任何笔记、标题、作者或赞数\n9. 严禁再输出[[XHS_BROWSE]]标记]` }
+                    { role: 'user', content: `[系统: 你刷了一会儿小红书首页，以下是你看到的内容]\n\n${xbr.notesText}\n\n[系统: 你已经看完了（注意：以上只是摘要，想看某条笔记的完整正文可以用 [[XHS_DETAIL: noteId]]）。现在请你：\n1. 像在跟朋友分享一样，随意聊聊你看到了什么有趣的\n2. 不用全部都提，挑你感兴趣的1-3条聊就行\n3. 可以吐槽、感叹、分享想法\n4. 如果觉得某条笔记特别值得分享，可以用 [[XHS_SHARE: 序号]] 把它作为卡片分享给用户（序号从1开始），可以分享多条；不要手写“[你分享了小红书笔记]”及标题/作者/互动/简介，分享卡片必须使用该标记${xhsCaps.post ? '\n5. 如果想发一条自己的笔记，可以用 [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]' : ''}${(xhsCaps.like || xhsCaps.favorite) ? '\n6. 如果喜欢某条笔记，可以用 [[XHS_LIKE: noteId]] 点赞，[[XHS_FAV: noteId]] 收藏' : ''}\n7. 如果用户想认真了解，或者某条笔记值得细看，请用 [[XHS_DETAIL: noteId]] 打开正文和评论区——不要只凭摘要假装看过全文和评论\n8. 只准讨论上面真实返回的笔记，不要编造系统没给出的任何笔记、标题、作者或赞数\n9. 严禁再输出[[XHS_BROWSE]]标记]` }
                 ];
 
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {

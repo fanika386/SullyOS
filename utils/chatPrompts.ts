@@ -927,6 +927,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    在系统把搜索结果返回给你之前，你**不可能知道**任何小红书笔记。绝对不要编造笔记标题、作者、赞数、正文或评论。
    只要你想提到“搜到了什么 / 看到了什么笔记”，就必须先把 \`[[XHS_SEARCH: 关键词]]\`（或 \`[[XHS_BROWSE]]\`）发出去，等系统返回真实结果后再描述。
    如果还没搜，就老实说“我去看看”，不要假装已经看过。
+   搜到感兴趣的笔记后，想认真了解就再用 \`[[XHS_DETAIL: noteId]]\` 打开正文和评论区；不要只凭搜索摘要假装看过全文和评论。
 
    ${isXhsFullyReadOnly(xhsCaps)
        ? `**⚠️ 只读模式（重要）:**
