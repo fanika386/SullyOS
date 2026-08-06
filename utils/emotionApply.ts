@@ -1,18 +1,16 @@
 import { DB } from './db';
 import type { CharacterProfile, CharacterBuff } from '../types';
 import { landAmbientEventFromEval } from './roomAmbient';
-import { CHAT_GEN_EVENTS } from './chatGenEvents';
+import { announceChatGen, CHAT_GEN_EVENTS } from './chatGenEvents';
 
 // 情绪评估失败的用户可见信号（OSContext 监听弹 toast）。本函数是本地 / instant(worker)
 // 两条路径的共用落点，在这里派发能覆盖「worker 推回的 raw 解析全灭」这类云端失败。
 const announceEmotionFailed = (charData: CharacterProfile, reason: string): void => {
-    try {
-        if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent(CHAT_GEN_EVENTS.emotionFailed, {
-                detail: { charId: charData.id, charName: charData.name, reason },
-            }));
-        }
-    } catch { /* SSR / 测试环境无 window */ }
+    announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
+        charId: charData.id,
+        charName: charData.name,
+        reason,
+    });
 };
 
 // 角色「最后一次内心独白(InnerState)」的轻量缓存（localStorage）。

@@ -12,7 +12,7 @@ import {
 import { runPendingToolCalls } from './instantToolRunner';
 import { drainPendingDiaries } from './pendingDiary';
 import { applyEmotionEvalRaw } from './emotionApply';
-import { CHAT_GEN_EVENTS } from './chatGenEvents';
+import { announceChatGen, CHAT_GEN_EVENTS } from './chatGenEvents';
 import { processNewMessages } from './memoryPalace/pipeline';
 import { loadMusicHooks } from '../context/MusicContext';
 import type { XhsNote } from './realtimeContext';
@@ -1104,18 +1104,17 @@ const flushInboxToChatImpl = async () => {
         // 派发失败事件让 OSContext 弹 toast。2026-07-17+ 的 worker 会把具体原因带在
         // metadata.emotionError（副 API HTTP 状态等）；旧 worker 没这字段就给通用文案。
         const workerReason = (message.metadata as any)?.emotionError;
-        try {
-          window.dispatchEvent(new CustomEvent(CHAT_GEN_EVENTS.emotionFailed, {
-            detail: {
-              charId: message.charId, charName: '',
-              reason: typeof workerReason === 'string' && workerReason
-                ? `云端评估失败——${workerReason}`
-                : '云端情绪评估无输出（副 API 报错或模型没返回内容，可查 worker 日志）',
-            },
-          }));
-        } catch { /* SSR-safe */ }
+        announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
+          charId: message.charId, charName: '',
+          reason: typeof workerReason === 'string' && workerReason
+            ? `云端评估失败——${workerReason}`
+            : '云端情绪评估无输出（副 API 报错或模型没返回内容，可查 worker 日志）',
+        });
       }
       // 无论成功与否都通知 useChatAI 熄灭 "情绪更新中" 徽章 (buff 已落 / 或这轮没结果).
+      // 同时补一条标准 emotionEnd：instant 路径原本只有非标准完成事件，注册表/横幅
+      // 需要它才知道这轮评估已收尾（否则要等 TTL 兜底）。
+      announceChatGen(CHAT_GEN_EVENTS.emotionEnd, { charId: message.charId, charName: '' });
       try {
         window.dispatchEvent(new CustomEvent('instant-emotion-done', { detail: { charId: message.charId } }));
       } catch { /* SSR-safe */ }

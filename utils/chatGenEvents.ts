@@ -74,6 +74,38 @@ export function getActiveReplyCharIds(): string[] {
     return [...activeReplies.keys()];
 }
 
+// 情绪评估同款注册表：evaluateEmotionBackground / worker 端评估在 Chat 卸载后仍会跑完，
+// 而 emotionStatus 是组件内 state。重挂载时靠这份注册表恢复「情绪分析中」徽章。
+interface ActiveEmotionEntry {
+    charName: string;
+    startedAt: number;
+}
+
+const activeEmotions = new Map<string, ActiveEmotionEntry>();
+
+function sweepExpiredEmotions(now: number = Date.now()): void {
+    for (const [charId, entry] of activeEmotions) {
+        if (now - entry.startedAt >= EMOTION_GEN_TTL_MS) activeEmotions.delete(charId);
+    }
+}
+
+/** 该角色当前是否有一轮情绪评估还在跑（含 Chat 卸载后的后台评估）。 */
+export function isChatEmotionActive(charId: string): boolean {
+    const entry = activeEmotions.get(charId);
+    if (!entry) return false;
+    if (Date.now() - entry.startedAt >= EMOTION_GEN_TTL_MS) {
+        activeEmotions.delete(charId);
+        return false;
+    }
+    return true;
+}
+
+/** 当前所有仍在情绪评估中的角色 id（测试/调试用，自动清理过期项）。 */
+export function getActiveEmotionCharIds(): string[] {
+    sweepExpiredEmotions();
+    return [...activeEmotions.keys()];
+}
+
 export interface ChatGenDetail {
     charId: string;
     charName: string;
@@ -87,6 +119,12 @@ export function announceChatGen(event: string, detail: ChatGenDetail): void {
         activeReplies.set(detail.charId, { charName: detail.charName, startedAt: Date.now() });
     } else if (event === CHAT_GEN_EVENTS.replyEnd) {
         activeReplies.delete(detail.charId);
+    } else if (event === CHAT_GEN_EVENTS.emotionStart) {
+        sweepExpiredEmotions();
+        activeEmotions.set(detail.charId, { charName: detail.charName, startedAt: Date.now() });
+    } else if (event === CHAT_GEN_EVENTS.emotionEnd || event === CHAT_GEN_EVENTS.emotionFailed) {
+        // emotionFailed 也是终态：instant 超时路径只有 failed 没有 end，不清会挂到 TTL。
+        activeEmotions.delete(detail.charId);
     }
     try {
         window.dispatchEvent(new CustomEvent(event, { detail }));

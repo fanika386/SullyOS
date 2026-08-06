@@ -59,6 +59,7 @@ const ChatBroadcast: React.FC = () => {
         window.addEventListener(CHAT_GEN_EVENTS.replyEnd, onReplyEnd);
         window.addEventListener(CHAT_GEN_EVENTS.emotionStart, onEmotionStart);
         window.addEventListener(CHAT_GEN_EVENTS.emotionEnd, onEmotionEnd);
+        window.addEventListener(CHAT_GEN_EVENTS.emotionFailed, onEmotionEnd);
         // instant 模式情绪评估在 worker 跑，结束信号是 activeMsgRuntime 的既有事件
         window.addEventListener('instant-emotion-done', onEmotionEnd);
         window.addEventListener(CHAT_VIEW_CHANGED_EVENT, onView);
@@ -74,6 +75,7 @@ const ChatBroadcast: React.FC = () => {
             window.removeEventListener(CHAT_GEN_EVENTS.replyEnd, onReplyEnd);
             window.removeEventListener(CHAT_GEN_EVENTS.emotionStart, onEmotionStart);
             window.removeEventListener(CHAT_GEN_EVENTS.emotionEnd, onEmotionEnd);
+            window.removeEventListener(CHAT_GEN_EVENTS.emotionFailed, onEmotionEnd);
             window.removeEventListener('instant-emotion-done', onEmotionEnd);
             window.removeEventListener(CHAT_VIEW_CHANGED_EVENT, onView);
             clearInterval(sweeper);

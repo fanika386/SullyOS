@@ -52,7 +52,7 @@ import { AMSG2_TOOLS, AMSG2_TOOL_NAMES, createAmsg2ToolSession, executeAmsg2Tool
 import { shouldSendThinkingParams } from '../utils/thinkingGate';
 import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
 import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply';
-import { announceChatGen, CHAT_GEN_EVENTS, isChatReplyActive } from '../utils/chatGenEvents';
+import { announceChatGen, CHAT_GEN_EVENTS, isChatEmotionActive, isChatReplyActive } from '../utils/chatGenEvents';
 import { shouldRequestAmbient, buildAmbientEvalSection } from '../utils/roomAmbient';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import {
@@ -483,6 +483,7 @@ export const useChatAI = ({
             window.removeEventListener(CHAT_GEN_EVENTS.replyEnd, onReplyEnd);
         };
     }, [char?.id]);
+
     // 流式预览气泡：stream 开启时，已完成行与安全尾句随增量以临时气泡上屏。
     // 流结束后由 applyAssistantPostProcessing 正常落库渲染，预览随即清空 —— 只影响体感，不改持久化。
     const [streamingBubbles, setStreamingBubbles] = useState<string[]>([]);
@@ -491,7 +492,37 @@ export const useChatAI = ({
     const [searchStatus, setSearchStatus] = useState<string>('');
     const [diaryStatus, setDiaryStatus] = useState<string>('');
     const [xhsStatus, setXhsStatus] = useState<string>('');
-    const [emotionStatus, setEmotionStatus] = useState<string>('');
+    // 初始值不写死空串：重挂载时若注册表里该角色还有情绪评估在跑，直接恢复「情绪分析中」。
+    const [emotionStatus, setEmotionStatus] = useState<string>(() => (char?.id && isChatEmotionActive(char.id)) ? 'evaluating' : '');
+
+    // 情绪评估的「情绪分析中」徽章与 isTyping 同款持久化：评估闭包在 Chat 卸载后继续跑，
+    // emotionStatus 是组件内 state，重挂载会丢。订阅 emotion start/end/failed 与
+    // instant 完成事件，并在挂载/切角色时按模块级注册表恢复。
+    useEffect(() => {
+        if (!char?.id) return;
+        const charId = char.id;
+        const onEmotionStart = (e: Event) => {
+            if ((e as CustomEvent).detail?.charId === charId) setEmotionStatus('evaluating');
+        };
+        const onEmotionEnd = (e: Event) => {
+            if ((e as CustomEvent).detail?.charId === charId) setEmotionStatus('');
+        };
+        const onInstantEmotionDone = (e: Event) => {
+            if ((e as CustomEvent).detail?.charId === charId) setEmotionStatus('');
+        };
+        setEmotionStatus(isChatEmotionActive(charId) ? 'evaluating' : '');
+        window.addEventListener(CHAT_GEN_EVENTS.emotionStart, onEmotionStart);
+        window.addEventListener(CHAT_GEN_EVENTS.emotionEnd, onEmotionEnd);
+        window.addEventListener(CHAT_GEN_EVENTS.emotionFailed, onEmotionEnd);
+        window.addEventListener('instant-emotion-done', onInstantEmotionDone);
+        return () => {
+            window.removeEventListener(CHAT_GEN_EVENTS.emotionStart, onEmotionStart);
+            window.removeEventListener(CHAT_GEN_EVENTS.emotionEnd, onEmotionEnd);
+            window.removeEventListener(CHAT_GEN_EVENTS.emotionFailed, onEmotionEnd);
+            window.removeEventListener('instant-emotion-done', onInstantEmotionDone);
+        };
+    }, [char?.id]);
+
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
     const [memoryPalaceResult, setMemoryPalaceResult] = useState<import('../utils/memoryPalace/pipeline').PipelineResult | null>(null);
     const memoryPalaceStatusRef = useRef(memoryPalaceStatus);

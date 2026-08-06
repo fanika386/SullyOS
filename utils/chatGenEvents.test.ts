@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     announceChatGen,
     CHAT_GEN_EVENTS,
+    EMOTION_GEN_TTL_MS,
+    getActiveEmotionCharIds,
     getActiveReplyCharIds,
+    isChatEmotionActive,
     isChatReplyActive,
     REPLY_GEN_TTL_MS,
     setChatViewSnapshot,
@@ -17,6 +20,9 @@ describe('chatGenEvents', () => {
         // 清掉上一个用例可能残留的注册表状态
         for (const charId of getActiveReplyCharIds()) {
             announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId, charName: '' });
+        }
+        for (const charId of getActiveEmotionCharIds()) {
+            announceChatGen(CHAT_GEN_EVENTS.emotionEnd, { charId, charName: '' });
         }
     });
 
@@ -67,6 +73,38 @@ describe('chatGenEvents', () => {
             vi.advanceTimersByTime(REPLY_GEN_TTL_MS + 1_000);
             expect(isChatReplyActive('c1')).toBe(false);
             expect(getActiveReplyCharIds()).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('emotionStart 标记、emotionEnd/emotionFailed 清除', () => {
+        expect(isChatEmotionActive('c1')).toBe(false);
+
+        announceChatGen(CHAT_GEN_EVENTS.emotionStart, { charId: 'c1', charName: '小角色' });
+        expect(isChatEmotionActive('c1')).toBe(true);
+        expect(getActiveEmotionCharIds()).toEqual(['c1']);
+
+        // emotionFailed 也是终态（instant 超时路径只发 failed 没有 end）
+        announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
+            charId: 'c1', charName: '小角色', reason: '超时',
+        });
+        expect(isChatEmotionActive('c1')).toBe(false);
+
+        // failed 之后再补 end 幂等
+        announceChatGen(CHAT_GEN_EVENTS.emotionEnd, { charId: 'c1', charName: '小角色' });
+        expect(getActiveEmotionCharIds()).toEqual([]);
+    });
+
+    it('emotion 超过 TTL 后视为不再活跃（与 ChatBroadcast 兜底同源）', () => {
+        vi.useFakeTimers();
+        try {
+            announceChatGen(CHAT_GEN_EVENTS.emotionStart, { charId: 'c1', charName: '小角色' });
+            expect(isChatEmotionActive('c1')).toBe(true);
+
+            vi.advanceTimersByTime(EMOTION_GEN_TTL_MS + 1_000);
+            expect(isChatEmotionActive('c1')).toBe(false);
+            expect(getActiveEmotionCharIds()).toEqual([]);
         } finally {
             vi.useRealTimers();
         }
