@@ -1957,17 +1957,35 @@ const Chat: React.FC = () => {
         return () => { cancelled = true; };
     }, [modalType, char?.id, char?.memoryPalaceEnabled]);
 
+    // 聊天设置里「点我开启全自动记忆」：就地打开开关，不用跳到记忆宫殿页面。
+    // 与记忆宫殿 App 的开关保持一致：Embedding 和副 API 都配好才允许开启，
+    // 避免自动整理偷偷占用主 API 额度。
+    const handleEnableAutoMemory = () => {
+        if (!char || !char.memoryPalaceEnabled || (char as any).autoArchiveEnabled) return;
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const mpLLM = memoryPalaceConfig?.lightLLM;
+        if (!mpEmb?.baseUrl || !mpEmb?.apiKey) {
+            addToast('记忆宫殿的 Embedding 还没配置，请先到记忆宫殿设置里配置好', 'error');
+            return;
+        }
+        if (!mpLLM?.baseUrl || !mpLLM?.apiKey) {
+            addToast('副 API 还没配置，请先到记忆宫殿设置里配置好，才能开启全自动记忆', 'error');
+            return;
+        }
+        updateCharacter(char.id, { autoArchiveEnabled: true } as any);
+        addToast('已开启全自动记忆，聊天会自动整理进记忆宫殿', 'success');
+    };
+
     const handleForceVectorize = async () => {
         if (!char || !char.memoryPalaceEnabled || isVectorizing) return;
         const mpEmb = memoryPalaceConfig?.embedding;
-        const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
-        // 副 API 未配置时回退主 API（与自动路径、记忆宫殿 App 手动路径保持一致），
-        // 这样只开记忆宫殿、关掉全自动记忆、想纯手动一键处理的用户也不会被卡住。
-        const mpLLM = (mpLLMConfigured?.baseUrl)
-            ? mpLLMConfigured
-            : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
-        if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM?.baseUrl) {
-            addToast('请先在记忆宫殿设置中配置 Embedding 和主 API/副 API', 'error');
+        const mpLLM = memoryPalaceConfig?.lightLLM;
+        if (!mpEmb?.baseUrl || !mpEmb?.apiKey) {
+            addToast('记忆宫殿的 Embedding 还没配置，请先到记忆宫殿设置里配置好', 'error');
+            return;
+        }
+        if (!mpLLM?.baseUrl || !mpLLM?.apiKey) {
+            addToast('副 API 还没配置，请先到记忆宫殿设置里配置好，才能开始存记忆', 'error');
             return;
         }
 
@@ -2938,6 +2956,7 @@ const Chat: React.FC = () => {
                 onToggleScheduleFeature={handleToggleScheduleFeature}
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isAutoMemoryEnabled={!!(char as any).autoArchiveEnabled}
+                onEnableAutoMemory={handleEnableAutoMemory}
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}
                 vectorizeProgress={vectorizeProgress}

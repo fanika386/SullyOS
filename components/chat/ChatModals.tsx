@@ -124,6 +124,8 @@ interface ChatModalsProps {
     isMemoryPalaceEnabled?: boolean;
     /** 全自动记忆（原自动归档）是否开启：关闭后自动总结条数不生效 */
     isAutoMemoryEnabled?: boolean;
+    /** 在聊天设置里直接开启全自动记忆（需要 Embedding + 副 API 已配置） */
+    onEnableAutoMemory?: () => void;
     isVectorizing?: boolean;
     /** 待处理条数（排除热区的真实缓冲区口径）：null=未算出/未开弹窗，0=已全同步 */
     vectorizePendingCount?: number | null;
@@ -246,7 +248,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
-    isMemoryPalaceEnabled, isAutoMemoryEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
+    isMemoryPalaceEnabled, isAutoMemoryEnabled, onEnableAutoMemory, isVectorizing, vectorizePendingCount, vectorizeProgress,
     memoryPalaceAutoSummaryThreshold, onSaveMemoryPalaceAutoSummaryThreshold, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
@@ -561,11 +563,24 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  <p className="text-[10px] text-emerald-800/70 mt-2 leading-relaxed">
                                      {getAutoSummaryThresholdHint(autoSummaryThresholdInput)}
                                  </p>
-                                 <p className="text-[10px] text-emerald-800/60 mt-1">
-                                     {isAutoMemoryEnabled === false
-                                         ? '「全自动记忆」已关闭，该条数暂不生效；开启后会按这个条数自动整理。'
-                                         : '点底部「保存设置」后，下一次自动总结立即按这个条数判断。'}
-                                 </p>
+                                 {isAutoMemoryEnabled === false ? (
+                                     <p className="text-[10px] text-emerald-800/60 mt-1">
+                                         「全自动记忆」已关闭，滑条暂不生效；需要先开启全自动记忆，到阈值才会自动整理。
+                                         {onEnableAutoMemory && (
+                                             <button
+                                                 type="button"
+                                                 onClick={onEnableAutoMemory}
+                                                 className="ml-1 font-bold text-emerald-600 underline active:scale-95"
+                                             >
+                                                 点我开启全自动记忆
+                                             </button>
+                                         )}
+                                     </p>
+                                 ) : (
+                                     <p className="text-[10px] text-emerald-800/60 mt-1">
+                                         点底部「保存设置」后，下一次自动总结立即按这个条数判断。
+                                     </p>
+                                 )}
                              </div>
                              <button
                                  onClick={onForceVectorize}
