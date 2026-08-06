@@ -606,6 +606,16 @@ const defaultApiConfig: APIConfig = {
   temperature: 0.85,
 };
 
+/** 清理已废弃的「世界书去重专用 API」字段：旧版设置页遗留数据，功能已移除，不再读取。 */
+const stripLegacyWorldbookDedupeApi = <T,>(config: T): T => {
+    if (!config || typeof config !== 'object') return config;
+    const source = config as Record<string, unknown>;
+    if (!('worldbookDedupeApi' in source)) return config;
+    const cleaned = { ...source };
+    delete cleaned.worldbookDedupeApi;
+    return cleaned as T;
+};
+
 const generateAvatar = (seed: string) => {
     const colors = ['FF9AA2', 'FFB7B2', 'FFDAC1', 'E2F0CB', 'B5EAD7', 'C7CEEA', 'e2e8f0', 'fcd34d', 'fca5a5'];
     const color = colors[seed.charCodeAt(0) % colors.length];
@@ -1313,7 +1323,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
              } catch(e) { console.error('Theme load error', e); }
         }
         
-        if (savedApi) setApiConfig(JSON.parse(savedApi));
+        if (savedApi) {
+            const parsedApi = JSON.parse(savedApi);
+            const cleanedApi = stripLegacyWorldbookDedupeApi(parsedApi);
+            setApiConfig(cleanedApi);
+            if (cleanedApi !== parsedApi) {
+                try {
+                    localStorage.setItem('os_api_config', JSON.stringify(cleanedApi));
+                } catch {
+                    // 清理失败不影响运行，下次启动会再试
+                }
+            }
+        }
         if (savedModels) {
             try { setAvailableModels(normalizeModelIds(JSON.parse(savedModels))); }
             catch (error) { console.warn('Model list load error', error); }
@@ -2741,7 +2762,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         addToast('主题没能保存到本地（存储空间可能已满），重启后可能会还原', 'error');
     }
   };
-  const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
+  const updateApiConfig = (updates: Partial<APIConfig>) => {
+      const newConfig = stripLegacyWorldbookDedupeApi({ ...apiConfig, ...updates });
+      setApiConfig(newConfig);
+      localStorage.setItem('os_api_config', JSON.stringify(newConfig));
+  };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
 
   // Cloud Backup functions
