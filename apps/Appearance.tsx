@@ -11,6 +11,7 @@ import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { Sparkle } from '@phosphor-icons/react';
 import { ChatAppearanceEditor as ModularChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
+import { WorldbookSkinManager } from '../components/worldbook/WorldbookSkinManager';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -503,7 +504,7 @@ const Appearance: React.FC = () => {
     });
     addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
   };
-  const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
+  const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat' | 'worldbook'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
   const lockWallpaperInputRef = useRef<HTMLInputElement>(null);
@@ -788,6 +789,7 @@ const Appearance: React.FC = () => {
           <button onClick={() => { setActiveTab('icons'); trackEvent('切换外观定制标签页', { tab: 'icons' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
           <button onClick={() => { setActiveTab('presets'); trackEvent('切换外观定制标签页', { tab: 'presets' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
           <button onClick={() => { setActiveTab('chat'); trackEvent('切换外观定制标签页', { tab: 'chat' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>聊天界面</button>
+          <button onClick={() => { setActiveTab('worldbook'); trackEvent('切换外观定制标签页', { tab: 'worldbook' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'worldbook' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>世界书</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
@@ -1520,6 +1522,8 @@ const Appearance: React.FC = () => {
             />
         ) : activeTab === 'chat' ? (
             <ModularChatAppearanceEditor theme={theme} updateTheme={updateTheme} onResetAllChrome={resetAllChromeCss} onOpenApp={openApp} />
+        ) : activeTab === 'worldbook' ? (
+            <WorldbookSkinManager />
         ) : null}
       </div>
     </div>

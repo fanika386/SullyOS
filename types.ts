@@ -1038,6 +1038,38 @@ export interface Worldbook extends WorldbookEntryConfig {
     updatedAt: number;
 }
 
+/** 世界书皮肤令牌：颜色 / 圆角 / 标题字体，全部可配置，代码只读令牌渲染。 */
+export interface WorldbookSkinTokens {
+    canvas: string;
+    surface: string;
+    surfaceAlt: string;
+    border: string;
+    text: string;
+    textSecondary: string;
+    textMuted: string;
+    primary: string;
+    primaryActive: string;
+    primarySoft: string;
+    success: string;
+    successSoft: string;
+    warning: string;
+    warningSoft: string;
+    danger: string;
+    dangerSoft: string;
+    radiusCard: number;
+    radiusInput: number;
+    radiusButton: number;
+    fontHeading: 'serif' | 'sans';
+}
+
+export interface WorldbookSkin {
+    id: string;
+    name: string;
+    createdAt: number;
+    isBuiltin?: boolean;
+    tokens: WorldbookSkinTokens;
+}
+
 // --- NOVEL / CO-WRITING TYPES ---
 export interface NovelProtagonist {
     id: string;
@@ -3410,6 +3442,7 @@ export interface FullBackupData {
     memoryPalaceConfig?: MemoryPalaceBackupConfig;
     customIcons?: Record<string, string>;
     appearancePresets?: AppearancePreset[];
+    worldbookSkins?: WorldbookSkin[];
     characters?: CharacterProfile[];
     characterGroups?: CharacterGroup[];
     groups?: GroupProfile[];

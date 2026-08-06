@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, WorldbookSkin, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
 import { modelRejectsSamplingParams, stripSamplingParams, isSamplingParamError } from '../utils/samplingParamCompat';
 import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport';
@@ -20,6 +20,13 @@ import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { runWorldEpisode, rerollWorldCharBeat } from '../utils/worldHome/engine';
 import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
+import {
+    BUILTIN_WORLDBOOK_SKINS,
+    DEFAULT_WORLDBOOK_SKIN_ID,
+    WORLDBOOK_ACTIVE_SKIN_KEY,
+    getDefaultWorldbookSkin,
+    isWorldbookSkinShape,
+} from '../utils/worldbookSkins';
 import { safeFetchJson } from '../utils/safeApi';
 import { captureApiRequestOnce, getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext, updateApiRequestCaptureUsage } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
@@ -364,6 +371,15 @@ interface OSContextType {
   renameAppearancePreset: (id: string, name: string) => void;
   exportAppearancePreset: (id: string) => Promise<Blob>;
   importAppearancePreset: (file: File) => Promise<void>;
+  worldbookSkins: WorldbookSkin[];
+  activeWorldbookSkinId: string;
+  activeWorldbookSkin: WorldbookSkin;
+  saveWorldbookSkin: (name: string) => Promise<void>;
+  applyWorldbookSkin: (id: string) => void;
+  deleteWorldbookSkin: (id: string) => Promise<void>;
+  renameWorldbookSkin: (id: string, name: string) => Promise<void>;
+  exportWorldbookSkin: (id: string) => Promise<Blob>;
+  importWorldbookSkin: (file: File) => Promise<void>;
 
   toasts: Toast[];
   addToast: (message: string, type?: Toast['type'], duration?: number, onClick?: () => void) => void;
@@ -904,6 +920,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
+  const [worldbookSkins, setWorldbookSkins] = useState<WorldbookSkin[]>(BUILTIN_WORLDBOOK_SKINS);
+  const [activeWorldbookSkinId, setActiveWorldbookSkinId] = useState<string>(() => {
+      try {
+          const stored = localStorage.getItem(WORLDBOOK_ACTIVE_SKIN_KEY);
+          return stored && BUILTIN_WORLDBOOK_SKINS.some(s => s.id === stored) ? stored : DEFAULT_WORLDBOOK_SKIN_ID;
+      } catch {
+          return DEFAULT_WORLDBOOK_SKIN_ID;
+      }
+  });
+  const activeWorldbookSkin = worldbookSkins.find(s => s.id === activeWorldbookSkinId)
+      || worldbookSkins.find(s => s.isBuiltin)
+      || getDefaultWorldbookSkin();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [errorDialog, setErrorDialog] = useState<{ title: string; details: string } | null>(null);
   
@@ -1437,6 +1465,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
                 loadedPresets.sort((a, b) => b.createdAt - a.createdAt);
                 setAppearancePresets(loadedPresets);
+
+                // Load worldbook skins from assets（内置皮肤始终保留在最前）
+                const loadedSkins: WorldbookSkin[] = [];
+                Object.keys(assetMap).forEach(key => {
+                    if (key.startsWith('worldbook_skin_')) {
+                        try {
+                            const skin = JSON.parse(assetMap[key]);
+                            if (isWorldbookSkinShape(skin)) loadedSkins.push(skin);
+                        } catch {}
+                    }
+                });
+                loadedSkins.sort((a, b) => b.createdAt - a.createdAt);
+                setWorldbookSkins(prev => [...prev.filter(s => s.isBuiltin), ...loadedSkins]);
 
                 // Restore desktop decoration images from IndexedDB
                 if (loadedTheme.desktopDecorations && loadedTheme.desktopDecorations.length > 0) {
@@ -3611,6 +3652,79 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       addToast(`已导入预设「${preset.name}」`, 'success');
   };
 
+  // --- Worldbook Skins（世界书皮肤：经典 / Claude / 用户自建） ---
+  const saveWorldbookSkin = async (name: string) => {
+      const skin: WorldbookSkin = {
+          id: `wb_skin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: name.trim() || '未命名皮肤',
+          createdAt: Date.now(),
+          tokens: { ...activeWorldbookSkin.tokens },
+      };
+      setWorldbookSkins(prev => [skin, ...prev]);
+      await DB.saveAsset(`worldbook_skin_${skin.id}`, JSON.stringify(skin));
+      addToast(`世界书皮肤「${skin.name}」已保存`, 'success');
+  };
+
+  const applyWorldbookSkin = (id: string) => {
+      const skin = worldbookSkins.find(s => s.id === id);
+      if (!skin) return;
+      setActiveWorldbookSkinId(id);
+      try {
+          localStorage.setItem(WORLDBOOK_ACTIVE_SKIN_KEY, id);
+      } catch (e) {
+          console.warn('[applyWorldbookSkin] localStorage 写入失败', e);
+      }
+      addToast(`已应用世界书皮肤「${skin.name}」`, 'success');
+  };
+
+  const deleteWorldbookSkin = async (id: string) => {
+      const skin = worldbookSkins.find(s => s.id === id);
+      if (!skin) return;
+      if (skin.isBuiltin) {
+          addToast('内置皮肤不能删除', 'info');
+          return;
+      }
+      setWorldbookSkins(prev => prev.filter(s => s.id !== id));
+      await DB.deleteAsset(`worldbook_skin_${id}`);
+      if (activeWorldbookSkinId === id) {
+          applyWorldbookSkin(DEFAULT_WORLDBOOK_SKIN_ID);
+      }
+      addToast('世界书皮肤已删除', 'info');
+  };
+
+  const renameWorldbookSkin = async (id: string, name: string) => {
+      setWorldbookSkins(prev => prev.map(s => {
+          if (s.id !== id) return s;
+          const updated = { ...s, name: name.trim() || s.name };
+          DB.saveAsset(`worldbook_skin_${id}`, JSON.stringify(updated));
+          return updated;
+      }));
+      addToast('世界书皮肤已重命名', 'success');
+  };
+
+  const exportWorldbookSkin = async (id: string): Promise<Blob> => {
+      const skin = worldbookSkins.find(s => s.id === id);
+      if (!skin) throw new Error('皮肤不存在');
+      return new Blob([JSON.stringify({ type: 'sully_worldbook_skin', ...skin }, null, 2)], { type: 'application/json;charset=utf-8' });
+  };
+
+  const importWorldbookSkin = async (file: File): Promise<void> => {
+      const text = await file.text();
+      const raw = JSON.parse(text);
+      if (raw.type !== 'sully_worldbook_skin' && !isWorldbookSkinShape(raw)) {
+          throw new Error('无效的世界书皮肤文件');
+      }
+      const skin: WorldbookSkin = {
+          id: `wb_skin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: raw.name || '导入的皮肤',
+          createdAt: Date.now(),
+          tokens: raw.tokens,
+      };
+      setWorldbookSkins(prev => [skin, ...prev]);
+      await DB.saveAsset(`worldbook_skin_${skin.id}`, JSON.stringify(skin));
+      addToast(`已导入世界书皮肤「${skin.name}」`, 'success');
+  };
+
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
   const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
       try {
@@ -3760,6 +3874,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   : undefined,
               appearancePresets: (mode === 'text_only' || mode === 'media_only' || mode === 'full')
                   ? cloneForInPlace(appearancePresets)
+                  : undefined,
+              worldbookSkins: (mode === 'text_only' || mode === 'media_only' || mode === 'full')
+                  ? cloneForInPlace(worldbookSkins)
                   : undefined,
               
               socialAppData: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? {
@@ -4448,6 +4565,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const hadAssetStoreBackup = data.assets !== undefined;
           const hadCustomIconsBackup = data.customIcons !== undefined;
           const hadAppearancePresetsBackup = data.appearancePresets !== undefined;
+          const hadWorldbookSkinsBackup = data.worldbookSkins !== undefined;
 
           const restoreAssetsInPlace = async (root: any, label = '数据'): Promise<void> => {
               if (!zip) return;
@@ -4706,10 +4824,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const novelList = await DB.getAllNovels();
           const songList = await DB.getAllSongs();
           
-          if (hadAssetStoreBackup || hadCustomIconsBackup || hadAppearancePresetsBackup) {
+          if (hadAssetStoreBackup || hadCustomIconsBackup || hadAppearancePresetsBackup || hadWorldbookSkinsBackup) {
               const assets = await DB.getAllAssets();
               const loadedIcons: Record<string, string> = {};
               const loadedPresets: AppearancePreset[] = [];
+              const loadedSkins: WorldbookSkin[] = [];
               if (Array.isArray(assets)) {
                   for (const a of assets) {
                       if (a.id.startsWith('icon_')) {
@@ -4722,11 +4841,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               loadedPresets.push(JSON.parse(a.data));
                           } catch {}
                       }
+                      if (a.id.startsWith('worldbook_skin_')) {
+                          try {
+                              const skin = JSON.parse(a.data);
+                              if (isWorldbookSkinShape(skin)) loadedSkins.push(skin);
+                          } catch {}
+                      }
                   }
               }
               setCustomIcons(loadedIcons);
               loadedPresets.sort((a, b) => b.createdAt - a.createdAt);
               setAppearancePresets(loadedPresets);
+              loadedSkins.sort((a, b) => b.createdAt - a.createdAt);
+              setWorldbookSkins(prev => [...prev.filter(s => s.isBuiltin), ...loadedSkins]);
           }
 
           // 导入后的角色清单（下面主动消息 2.0 对账要用规范化之后的那份）
@@ -4930,6 +5057,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     renameAppearancePreset,
     exportAppearancePreset,
     importAppearancePreset,
+    worldbookSkins,
+    activeWorldbookSkinId,
+    activeWorldbookSkin,
+    saveWorldbookSkin,
+    applyWorldbookSkin,
+    deleteWorldbookSkin,
+    renameWorldbookSkin,
+    exportWorldbookSkin,
+    importWorldbookSkin,
     toasts,
     addToast,
     errorDialog,

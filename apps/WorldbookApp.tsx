@@ -14,6 +14,7 @@ import {
     WORLDBOOK_POSITION_LABELS,
     WORLDBOOK_ROLE_LABELS,
 } from '../utils/worldbook';
+import { worldbookSkinCssVars, WORLDBOOK_SKIN_CLASSIC_ID } from '../utils/worldbookSkins';
 import type { WorldbookDuplicateAiRelation, WorldbookDuplicateAnalysis, WorldbookDuplicateSeverity } from '../utils/worldbook';
 import { worldbookDedupTaskStore, useWorldbookDedupTask } from '../utils/worldbookDedupTaskStore';
 import { confirmExportSafety } from '../utils/exportGuard';
@@ -48,10 +49,10 @@ const DEDUPE_SEVERITY_LABELS: Record<WorldbookDuplicateSeverity, string> = {
 };
 
 const DEDUPE_SEVERITY_STYLES: Record<WorldbookDuplicateSeverity, string> = {
-    exact: 'bg-red-50 text-red-600 border-red-100',
-    high: 'bg-orange-50 text-orange-600 border-orange-100',
-    medium: 'bg-amber-50 text-amber-600 border-amber-100',
-    low: 'bg-sky-50 text-sky-600 border-sky-100',
+    exact: 'bg-[var(--wb-danger-soft)] text-[var(--wb-danger)] border-[var(--wb-danger)]',
+    high: 'bg-[var(--wb-warning-soft)] text-[var(--wb-warning)] border-[var(--wb-warning)]',
+    medium: 'bg-[var(--wb-warning-soft)] text-[var(--wb-warning)] border-[var(--wb-warning)]',
+    low: 'bg-[var(--wb-success-soft)] text-[var(--wb-success)] border-[var(--wb-success)]',
 };
 
 const DEDUPE_AI_RELATION_LABELS: Record<WorldbookDuplicateAiRelation, string> = {
@@ -63,16 +64,16 @@ const DEDUPE_AI_RELATION_LABELS: Record<WorldbookDuplicateAiRelation, string> = 
 };
 
 const DEDUPE_AI_RELATION_STYLES: Record<WorldbookDuplicateAiRelation, string> = {
-    duplicate: 'bg-red-50 text-red-600 border-red-100',
-    overlap: 'bg-amber-50 text-amber-600 border-amber-100',
-    complementary: 'bg-emerald-50 text-emerald-600 border-emerald-100',
-    conflict: 'bg-violet-50 text-violet-600 border-violet-100',
-    unrelated: 'bg-slate-50 text-slate-500 border-slate-100',
+    duplicate: 'bg-[var(--wb-danger-soft)] text-[var(--wb-danger)] border-[var(--wb-danger)]',
+    overlap: 'bg-[var(--wb-warning-soft)] text-[var(--wb-warning)] border-[var(--wb-warning)]',
+    complementary: 'bg-[var(--wb-success-soft)] text-[var(--wb-success)] border-[var(--wb-success)]',
+    conflict: 'bg-[var(--wb-primary-soft)] text-[var(--wb-primary)] border-[var(--wb-primary)]',
+    unrelated: 'bg-[var(--wb-surface-alt)] text-[var(--wb-text2)] border-[var(--wb-border)]',
 };
 import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, openApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets, availableModels, setAvailableModels } = useOS();
+    const { closeApp, openApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast, apiConfig, apiPresets, availableModels, setAvailableModels, activeWorldbookSkin } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -635,52 +636,55 @@ const WorldbookApp: React.FC = () => {
     }, [dedupeTask.focusRequestAt, dedupeTask.status]);
 
     // --- Render ---
+    const skinVars = worldbookSkinCssVars(activeWorldbookSkin);
+    const isClassicSkin = activeWorldbookSkin.id === WORLDBOOK_SKIN_CLASSIC_ID;
 
     // EDIT MODAL (Full Screen Overlay Style)
     if (isEditing) {
         return (
-            <div className="h-full w-full bg-[#f5f6fa] flex flex-col font-sans animate-fade-in">
-                <div className="bg-white/90 backdrop-blur-xl border-b border-slate-200/70 shrink-0 z-20" style={{ paddingTop: 'var(--safe-top)' }}>
+            <div className="h-full w-full bg-[var(--wb-canvas)] flex flex-col font-sans animate-fade-in" style={skinVars}>
+                <style>{`.wb-h{font-family:var(--wb-font-heading)}`}</style>
+                <div className="bg-[var(--wb-surface)] backdrop-blur-xl border-b border-[var(--wb-border)] shrink-0 z-20" style={{ paddingTop: 'var(--safe-top)' }}>
                     <div className="h-16 max-w-2xl mx-auto w-full flex items-center justify-between px-5">
-                        <button onClick={() => setIsEditing(false)} className="px-3 py-2 -ml-3 rounded-xl text-slate-500 font-semibold text-sm hover:bg-slate-100 active:scale-95 transition-all">取消</button>
+                        <button onClick={() => setIsEditing(false)} className="px-3 py-2 -ml-3 rounded-[var(--wb-radius-input)] text-[var(--wb-text2)] font-semibold text-sm hover:bg-[var(--wb-surface-alt)] active:scale-95 transition-all">取消</button>
                         <div className="text-center">
-                            <div className="text-[10px] font-bold tracking-[0.16em] text-indigo-400 uppercase">Worldbook</div>
-                            <div className="text-sm font-bold text-slate-800 mt-0.5">{editingBook ? '编辑条目' : '新建条目'}</div>
+                            <div className="text-[10px] font-bold tracking-[0.16em] text-[var(--wb-primary)] uppercase">Worldbook</div>
+                            <div className="wb-h text-sm font-bold text-[var(--wb-text)] mt-0.5">{editingBook ? '编辑条目' : '新建条目'}</div>
                         </div>
-                        <button onClick={handleSave} className="px-4 py-2 -mr-1 bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-sm shadow-indigo-200 active:scale-95 transition-all hover:bg-indigo-600">保存</button>
+                        <button onClick={handleSave} className="px-4 py-2 -mr-1 bg-[var(--wb-primary)] text-white rounded-[var(--wb-radius-input)] text-xs font-bold shadow-sm shadow-black/10 active:scale-95 transition-all hover:bg-[var(--wb-primary-active)]">保存</button>
                     </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto">
                     <div className="w-full max-w-2xl mx-auto px-5 py-5 pb-10 space-y-4">
-                        <div className="bg-white rounded-[1.5rem] border border-slate-200/70 p-5 shadow-sm shadow-slate-200/40 space-y-4">
+                        <div className="bg-[var(--wb-surface)] rounded-[var(--wb-radius-card)] border border-[var(--wb-border)] p-5 shadow-sm shadow-black/5 space-y-4">
                             <div>
-                                <div className="text-[11px] font-bold tracking-[0.14em] text-indigo-500 uppercase">基础信息</div>
-                                <p className="text-[10px] text-slate-400 mt-1">用于识别、整理和挂载这条世界书。</p>
+                                <div className="text-[11px] font-bold tracking-[0.14em] text-[var(--wb-primary)] uppercase">基础信息</div>
+                                <p className="text-[10px] text-[var(--wb-muted)] mt-1">用于识别、整理和挂载这条世界书。</p>
                             </div>
                             <div>
-                            <label className="text-xs font-bold text-slate-500 mb-2 block">标题</label>
+                            <label className="text-xs font-bold text-[var(--wb-text2)] mb-2 block">标题</label>
                             <input 
                                 value={tempTitle}
                                 onChange={e => setTempTitle(e.target.value)}
                                 placeholder="例如: 魔法体系、公司背景..." 
-                                className="w-full text-base font-bold text-slate-800 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                className="w-full text-base font-bold text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                             />
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-slate-500 mb-2 block">分组</label>
+                                <label className="text-xs font-bold text-[var(--wb-text2)] mb-2 block">分组</label>
                                 <input
                                     value={tempCategory}
                                     onChange={e => setTempCategory(e.target.value)}
                                     placeholder="例如: 世界观、人物、地理..."
-                                    className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                    className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                 />
                                 {categoryNames.length > 0 && (
                                     <div className="mt-2">
                                         <button
                                             type="button"
                                             onClick={() => setShowCategoryPicker(v => !v)}
-                                            className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-500 px-1 py-1 active:scale-95 transition-transform"
+                                            className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--wb-primary)] px-1 py-1 active:scale-95 transition-transform"
                                         >
                                             <span className={`transition-transform duration-200 inline-block ${showCategoryPicker ? 'rotate-90' : ''}`}>
                                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" /></svg>
@@ -688,16 +692,16 @@ const WorldbookApp: React.FC = () => {
                                             选择已有分组 ({categoryNames.length})
                                         </button>
                                         {showCategoryPicker && (
-                                            <div className="mt-1.5 max-h-36 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/60 p-2 flex flex-wrap gap-1.5 overscroll-contain">
+                                            <div className="mt-1.5 max-h-36 overflow-y-auto rounded-[var(--wb-radius-input)] border border-[var(--wb-border)] bg-[var(--wb-surface-alt)]/60 p-2 flex flex-wrap gap-1.5 overscroll-contain">
                                                 {filteredCategorySuggestions.length === 0 ? (
-                                                    <span className="text-[10px] text-slate-400 px-1 py-0.5">没有匹配「{tempCategory.trim()}」的分组，保存后将新建。</span>
+                                                    <span className="text-[10px] text-[var(--wb-muted)] px-1 py-0.5">没有匹配「{tempCategory.trim()}」的分组，保存后将新建。</span>
                                                 ) : (
                                                     filteredCategorySuggestions.map(cat => (
                                                         <button
                                                             key={cat}
                                                             type="button"
                                                             onClick={() => { setTempCategory(cat); setShowCategoryPicker(false); }}
-                                                            className={`max-w-full truncate text-[11px] px-2.5 py-1 rounded-full border transition-colors active:scale-95 ${tempCategory.trim() === cat ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'}`}
+                                                            className={`max-w-full truncate text-[11px] px-2.5 py-1 rounded-full border transition-colors active:scale-95 ${tempCategory.trim() === cat ? 'bg-[var(--wb-primary)] text-white border-[var(--wb-primary)]' : 'bg-[var(--wb-surface)] text-[var(--wb-text2)] border-[var(--wb-border)] hover:border-[var(--wb-primary)]'}`}
                                                         >
                                                             {cat}
                                                         </button>
@@ -707,38 +711,38 @@ const WorldbookApp: React.FC = () => {
                                         )}
                                     </div>
                                 )}
-                                <p className="text-[10px] text-slate-400 mt-1.5 px-1">同名条目会自动归入已有分组；输入文字可过滤上方候选。</p>
+                                <p className="text-[10px] text-[var(--wb-muted)] mt-1.5 px-1">同名条目会自动归入已有分组；输入文字可过滤上方候选。</p>
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-[1.5rem] border border-slate-200/70 p-5 shadow-sm shadow-slate-200/40 space-y-5">
+                        <div className="bg-[var(--wb-surface)] rounded-[var(--wb-radius-card)] border border-[var(--wb-border)] p-5 shadow-sm shadow-black/5 space-y-5">
                             <div className="flex items-center justify-between gap-4">
                                 <div>
-                                    <div className="text-xs font-bold text-slate-700">启用条目</div>
-                                    <p className="text-[10px] text-slate-400 mt-1">关闭后保留内容，但不会注入提示词。</p>
+                                    <div className="text-xs font-bold text-[var(--wb-text)]">启用条目</div>
+                                    <p className="text-[10px] text-[var(--wb-muted)] mt-1">关闭后保留内容，但不会注入提示词。</p>
                                 </div>
                                 <button
                                     type="button"
                                     onClick={() => setTempEnabled(value => !value)}
-                                    className={`relative inline-flex w-12 h-7 shrink-0 items-center rounded-full p-1 transition-colors duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-100 ${tempEnabled ? 'bg-indigo-500' : 'bg-slate-200'}`}
+                                    className={`relative inline-flex w-12 h-7 shrink-0 items-center rounded-full p-1 transition-colors duration-200 focus:outline-none focus:ring-4 focus:ring-[var(--wb-primary-soft)] ${tempEnabled ? 'bg-[var(--wb-primary)]' : 'bg-[var(--wb-border)]'}`}
                                     aria-pressed={tempEnabled}
                                 >
-                                    <span className={`block w-5 h-5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-200 ${tempEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                                    <span className={`block w-5 h-5 rounded-full bg-[var(--wb-surface)] shadow-sm ring-1 ring-black/5 transition-transform duration-200 ${tempEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                                 </button>
                             </div>
 
-                            <div className="border-t border-slate-100 pt-4">
-                                <label className="text-[11px] font-bold text-slate-400 uppercase mb-2 block tracking-[0.12em]">触发方式</label>
+                            <div className="border-t border-[var(--wb-border)] pt-4">
+                                <label className="text-[11px] font-bold text-[var(--wb-muted)] uppercase mb-2 block tracking-[0.12em]">触发方式</label>
                                 <label className="flex items-center gap-3 py-2 cursor-pointer select-none">
                                     <input
                                         type="checkbox"
                                         checked={!tempConstant}
                                         onChange={e => setTempConstant(!e.target.checked)}
-                                        className="w-4 h-4 accent-indigo-500"
+                                        className="w-4 h-4 accent-[var(--wb-primary)]"
                                     />
-                                    <span className="text-sm font-semibold text-slate-700">启用关键词触发</span>
+                                    <span className="text-sm font-semibold text-[var(--wb-text)]">启用关键词触发</span>
                                 </label>
-                                <p className={`text-[10px] leading-relaxed mt-1 pl-7 ${tempConstant ? 'text-slate-400' : 'text-indigo-500'}`}>
+                                <p className={`text-[10px] leading-relaxed mt-1 pl-7 ${tempConstant ? 'text-[var(--wb-muted)]' : 'text-[var(--wb-primary)]'}`}>
                                     {tempConstant
                                         ? '未勾选：不检查关键词，这条世界书会始终生效。'
                                         : '已勾选：只有主要关键词命中时才生效；未填写关键词将无法保存。'}
@@ -748,30 +752,30 @@ const WorldbookApp: React.FC = () => {
                             {!tempConstant && (
                                 <div className="space-y-4 animate-fade-in">
                                     <div>
-                                        <label className="text-xs font-bold text-slate-400 mb-2 block">主要关键词</label>
+                                        <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">主要关键词</label>
                                         <input
                                             value={tempKeywords}
                                             onChange={e => setTempKeywords(e.target.value)}
                                             placeholder="多个关键词用逗号或换行分隔"
-                                            className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                            className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                         />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-slate-400 mb-2 block">辅助关键词（可选）</label>
+                                        <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">辅助关键词（可选）</label>
                                         <input
                                             value={tempSecondaryKeywords}
                                             onChange={e => setTempSecondaryKeywords(e.target.value)}
                                             placeholder="用于进一步限制触发条件"
-                                            className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                            className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                         />
                                     </div>
                                     {splitWorldbookKeywords(tempSecondaryKeywords).length > 0 && (
                                         <div>
-                                            <label className="text-xs font-bold text-slate-400 mb-2 block">辅助关键词条件</label>
+                                            <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">辅助关键词条件</label>
                                             <select
                                                 value={tempSelectiveLogic}
                                                 onChange={e => setTempSelectiveLogic(Number(e.target.value) as WorldbookSelectiveLogic)}
-                                                className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                                className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                             >
                                                 <option value={0}>至少匹配一个</option>
                                                 <option value={3}>全部匹配</option>
@@ -781,36 +785,36 @@ const WorldbookApp: React.FC = () => {
                                         </div>
                                     )}
                                     <div className="grid grid-cols-2 gap-3">
-                                        <label className="flex items-center gap-2 text-xs text-slate-600">
-                                            <input type="checkbox" checked={tempCaseSensitive} onChange={e => setTempCaseSensitive(e.target.checked)} className="accent-indigo-500" />
+                                        <label className="flex items-center gap-2 text-xs text-[var(--wb-text2)]">
+                                            <input type="checkbox" checked={tempCaseSensitive} onChange={e => setTempCaseSensitive(e.target.checked)} className="accent-[var(--wb-primary)]" />
                                             区分大小写
                                         </label>
-                                        <label className="flex items-center gap-2 text-xs text-slate-600">
-                                            <input type="checkbox" checked={tempWholeWords} onChange={e => setTempWholeWords(e.target.checked)} className="accent-indigo-500" />
+                                        <label className="flex items-center gap-2 text-xs text-[var(--wb-text2)]">
+                                            <input type="checkbox" checked={tempWholeWords} onChange={e => setTempWholeWords(e.target.checked)} className="accent-[var(--wb-primary)]" />
                                             完整词匹配
                                         </label>
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-slate-400 mb-2 block">扫描最近消息数</label>
+                                        <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">扫描最近消息数</label>
                                         <input
                                             type="number"
                                             min={0}
                                             value={tempScanDepth}
                                             onChange={e => setTempScanDepth(Number(e.target.value))}
-                                            className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                            className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                         />
                                     </div>
                                 </div>
                             )}
                         </div>
 
-                        <div className="bg-white rounded-[1.5rem] border border-slate-200/70 p-5 shadow-sm shadow-slate-200/40 space-y-4">
+                        <div className="bg-[var(--wb-surface)] rounded-[var(--wb-radius-card)] border border-[var(--wb-border)] p-5 shadow-sm shadow-black/5 space-y-4">
                             <div>
-                                <div className="text-[11px] font-bold tracking-[0.14em] text-indigo-500 uppercase">注入设置</div>
-                                <p className="text-[10px] text-slate-400 mt-1">控制条目在提示词中的位置和优先级。</p>
+                                <div className="text-[11px] font-bold tracking-[0.14em] text-[var(--wb-primary)] uppercase">注入设置</div>
+                                <p className="text-[10px] text-[var(--wb-muted)] mt-1">控制条目在提示词中的位置和优先级。</p>
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-slate-500 mb-2 block">注入位置</label>
+                                <label className="text-xs font-bold text-[var(--wb-text2)] mb-2 block">注入位置</label>
                                 <select
                                     value={tempPosition}
                                     onChange={e => {
@@ -818,7 +822,7 @@ const WorldbookApp: React.FC = () => {
                                         setTempPosition(nextPosition);
                                         trackEvent('切换世界书注入位置', { position: nextPosition });
                                     }}
-                                    className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                    className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                 >
                                     {(Object.entries(WORLDBOOK_POSITION_LABELS) as [string, string][]).map(([value, label]) => (
                                         <option key={value} value={value}>
@@ -826,7 +830,7 @@ const WorldbookApp: React.FC = () => {
                                         </option>
                                     ))}
                                 </select>
-                                <p className="text-[10px] leading-relaxed text-slate-400 mt-2 px-1">
+                                <p className="text-[10px] leading-relaxed text-[var(--wb-muted)] mt-2 px-1">
                                     {WORLDBOOK_POSITION_DESCRIPTIONS[tempPosition]}
                                 </p>
                             </div>
@@ -834,22 +838,22 @@ const WorldbookApp: React.FC = () => {
                             {tempPosition === 4 && (
                                 <div className="grid grid-cols-2 gap-3 animate-fade-in">
                                     <div>
-                                        <label className="text-xs font-bold text-slate-400 mb-2 block">消息深度</label>
+                                        <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">消息深度</label>
                                         <input
                                             type="number"
                                             min={0}
                                             value={tempDepth}
                                             onChange={e => setTempDepth(Number(e.target.value))}
-                                            className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                            className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                         />
-                                        <p className="text-[10px] text-slate-400 mt-1 px-1">0 最靠近最新消息，数字越大越往前。</p>
+                                        <p className="text-[10px] text-[var(--wb-muted)] mt-1 px-1">0 最靠近最新消息，数字越大越往前。</p>
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-slate-400 mb-2 block">消息角色</label>
+                                        <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">消息角色</label>
                                         <select
                                             value={tempRole}
                                             onChange={e => setTempRole(Number(e.target.value) as WorldbookDepthRole)}
-                                            className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                            className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                         >
                                             {(Object.entries(WORLDBOOK_ROLE_LABELS) as [string, string][]).map(([value, label]) => (
                                                 <option key={value} value={value}>{label}</option>
@@ -861,17 +865,17 @@ const WorldbookApp: React.FC = () => {
 
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="text-xs font-bold text-slate-400 mb-2 block">插入顺序</label>
+                                    <label className="text-xs font-bold text-[var(--wb-muted)] mb-2 block">插入顺序</label>
                                     <input
                                         type="number"
                                         value={tempOrder}
                                         onChange={e => setTempOrder(Number(e.target.value))}
-                                        className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all"
+                                        className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all"
                                     />
                                 </div>
                                 <div>
-                                    <label className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-2">
-                                        <input type="checkbox" checked={tempUseProbability} onChange={e => setTempUseProbability(e.target.checked)} className="accent-indigo-500" />
+                                    <label className="flex items-center gap-2 text-xs font-bold text-[var(--wb-muted)] mb-2">
+                                        <input type="checkbox" checked={tempUseProbability} onChange={e => setTempUseProbability(e.target.checked)} className="accent-[var(--wb-primary)]" />
                                         启用随机概率
                                     </label>
                                     <input
@@ -881,24 +885,24 @@ const WorldbookApp: React.FC = () => {
                                         disabled={!tempUseProbability}
                                         value={tempProbability}
                                         onChange={e => setTempProbability(Number(e.target.value))}
-                                        className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all disabled:opacity-40"
+                                        className="w-full text-sm text-[var(--wb-text)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-input)] px-4 py-3 outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all disabled:opacity-40"
                                     />
                                 </div>
                             </div>
-                            <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 text-[10px] leading-relaxed text-indigo-700">
+                            <div className="rounded-[var(--wb-radius-input)] border border-[var(--wb-border)] bg-[var(--wb-primary-soft)]/70 px-4 py-3 text-[10px] leading-relaxed text-[var(--wb-primary)]">
                                 <span className="font-bold">未勾选“启用随机概率”不代表条目没有激活。</span>
                                 未勾选时会跳过随机判定：只要条目已启用且满足常驻／关键词条件，就会按 100% 通过；勾选后，才会在条件满足时按上方百分比再次随机判断。
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-[1.5rem] border border-slate-200/70 p-5 shadow-sm shadow-slate-200/40">
-                            <div className="text-[11px] font-bold tracking-[0.14em] text-indigo-500 uppercase">设定内容</div>
-                            <p className="text-[10px] text-slate-400 mt-1 mb-3">支持 Markdown；这里只填写实际需要注入模型的内容。</p>
+                        <div className="bg-[var(--wb-surface)] rounded-[var(--wb-radius-card)] border border-[var(--wb-border)] p-5 shadow-sm shadow-black/5">
+                            <div className="text-[11px] font-bold tracking-[0.14em] text-[var(--wb-primary)] uppercase">设定内容</div>
+                            <p className="text-[10px] text-[var(--wb-muted)] mt-1 mb-3">支持 Markdown；这里只填写实际需要注入模型的内容。</p>
                             <textarea 
                                 value={tempContent}
                                 onChange={e => setTempContent(e.target.value)}
                                 placeholder="在此输入详细的设定内容，支持 Markdown 格式..." 
-                                className="w-full h-80 bg-slate-50/80 border border-slate-200 rounded-2xl p-4 text-sm text-slate-700 leading-relaxed resize-none outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all font-mono"
+                                className="w-full h-80 bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] rounded-[var(--wb-radius-card)] p-4 text-sm text-[var(--wb-text)] leading-relaxed resize-none outline-none focus:bg-[var(--wb-surface)] focus:border-[var(--wb-primary)] focus:ring-4 focus:ring-[var(--wb-primary-soft)] transition-all font-mono"
                             />
                         </div>
                     </div>
@@ -909,21 +913,26 @@ const WorldbookApp: React.FC = () => {
 
     // LIST VIEW
     return (
-        <div className="h-full w-full relative overflow-hidden font-sans bg-slate-100 flex flex-col">
+        <div className="h-full w-full relative overflow-hidden font-sans bg-[var(--wb-canvas)] flex flex-col" style={skinVars}>
+            <style>{`.wb-h{font-family:var(--wb-font-heading)}`}</style>
             {/* Background Atmosphere */}
-            <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-slate-100 to-violet-50 pointer-events-none"></div>
-            <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-200/20 rounded-full blur-3xl pointer-events-none"></div>
-            <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-white/80 to-transparent pointer-events-none z-10"></div>
+            {isClassicSkin && (
+                <>
+                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-slate-100 to-violet-50 pointer-events-none"></div>
+                    <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-200/20 rounded-full blur-3xl pointer-events-none"></div>
+                    <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-white/80 to-transparent pointer-events-none z-10"></div>
+                </>
+            )}
 
             {/* Header */}
-            <div className="bg-white/70 backdrop-blur-xl border-b border-white/40 shrink-0 sticky top-0 z-20 shadow-sm" style={{ paddingTop: 'var(--safe-top)' }}>
+            <div className="bg-[var(--wb-surface)] backdrop-blur-xl border-b border-[var(--wb-border)] shrink-0 sticky top-0 z-20 shadow-sm" style={{ paddingTop: 'var(--safe-top)' }}>
                 <div className="flex items-center px-6 py-3">
                     <div className="flex justify-between items-center w-full">
                         <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-[var(--wb-text2)]"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
-                        <span className="font-bold text-slate-700 text-lg tracking-wide flex items-center gap-2">
-                            <DiamondsFour size={18} className="text-indigo-500" /> 世界书
+                        <span className="wb-h font-bold text-[var(--wb-text)] text-lg tracking-wide flex items-center gap-2">
+                            <DiamondsFour size={18} className="text-[var(--wb-primary)]" /> 世界书
                         </span>
                         <div className="flex items-center gap-2">
                             {worldbooks.length > 0 && (
@@ -943,7 +952,7 @@ const WorldbookApp: React.FC = () => {
                             <input ref={importRef} type="file" className="hidden" onChange={handleImport} />
                             <button
                                 onClick={toggleDedupeMode}
-                                className={`h-9 px-3 rounded-full shadow-sm flex items-center gap-1.5 active:scale-90 transition-all border ${dedupeMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white/80 text-indigo-500 border-white hover:bg-indigo-50'}`}
+                                className={`h-9 px-3 rounded-[var(--wb-radius-button)] shadow-sm flex items-center gap-1.5 active:scale-90 transition-all border ${dedupeMode ? 'bg-[var(--wb-text)] text-white border-[var(--wb-text)]' : 'bg-[var(--wb-surface)] text-[var(--wb-primary)] border-[var(--wb-border)] hover:bg-[var(--wb-primary-soft)]'}`}
                                 title={dedupeMode ? '退出去重检测' : '去重检测'}
                             >
                                 {dedupeMode ? <X size={15} weight="bold" /> : <MagnifyingGlass size={15} weight="bold" />}
@@ -951,12 +960,12 @@ const WorldbookApp: React.FC = () => {
                             </button>
                             <button
                                 onClick={() => { setShowImportConfirm(true); trackEvent('打开导入世界书弹窗'); }}
-                                className="w-9 h-9 bg-white/80 text-indigo-500 border border-white rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+                                className="w-9 h-9 bg-[var(--wb-surface)] text-[var(--wb-primary)] border border-[var(--wb-border)] rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform"
                                 title="导入标准世界书"
                             >
                                 <UploadSimple size={18} weight="bold" />
                             </button>
-                            <button onClick={handleCreate} className="w-9 h-9 bg-indigo-500 text-white rounded-full shadow-lg shadow-indigo-200 flex items-center justify-center active:scale-90 transition-transform hover:bg-indigo-600">
+                            <button onClick={handleCreate} className="w-9 h-9 bg-[var(--wb-primary)] text-white rounded-[var(--wb-radius-button)] shadow-lg shadow-black/10 flex items-center justify-center active:scale-90 transition-transform hover:bg-[var(--wb-primary-active)]">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                             </button>
                         </div>
@@ -988,32 +997,32 @@ const WorldbookApp: React.FC = () => {
 
             {/* Content List */}
             <div className="flex-1 overflow-y-auto p-5 pb-24 space-y-4 no-scrollbar relative z-0">
-                <div className="rounded-2xl border border-indigo-100/80 bg-white/75 backdrop-blur-md p-4 shadow-sm text-slate-600">
-                    <div className="flex items-center gap-2 text-xs font-bold text-indigo-600">
+                <div className="rounded-[var(--wb-radius-card)] border border-[var(--wb-border)]/80 bg-[var(--wb-surface)] backdrop-blur-md p-4 shadow-sm text-[var(--wb-text2)]">
+                    <div className="flex items-center gap-2 text-xs font-bold text-[var(--wb-primary)]">
                         <BookOpen size={16} weight="bold" /> 世界书是做什么的？
                     </div>
                     <p className="mt-2 text-[11px] leading-relaxed">
                         世界书是一组按条件提供给 AI 的补充设定，可用于世界观、人物关系、地点和规则等内容。它不会自己发消息，也不等同于角色记忆。
                     </p>
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--wb-text2)]">
                         创建或导入后，还要在角色编辑页的“扩展设定”中挂载；聊天生成回复时，已启用并满足常驻或关键词条件（以及可选的概率判定）的条目才会注入提示词。
                     </p>
-                    <p className="mt-2 rounded-xl bg-indigo-50 px-3 py-2 text-[10px] leading-relaxed text-indigo-700">
+                    <p className="mt-2 rounded-[var(--wb-radius-input)] bg-[var(--wb-primary-soft)] px-3 py-2 text-[10px] leading-relaxed text-[var(--wb-primary)]">
                         注意：“启用随机概率”未点亮 = 不使用随机抽取，条件满足时按 100% 通过；并不是“未激活”。
                     </p>
                 </div>
 
                 {/* 后台任务提示条：退出世界书再回来，也能一眼看到 AI 深度检查还在跑 / 已有结果 */}
                 {dedupeTask.status !== 'idle' && !dedupeMode && (
-                    <div className={`rounded-2xl border p-3 shadow-sm backdrop-blur-md ${dedupeTask.status === 'running'
-                        ? 'border-indigo-100 bg-indigo-50/80'
+                    <div className={`rounded-[var(--wb-radius-card)] border p-3 shadow-sm backdrop-blur-md ${dedupeTask.status === 'running'
+                        ? 'border-[var(--wb-border)] bg-[var(--wb-primary-soft)]/80'
                         : dedupeTask.status === 'error' || dedupeTask.status === 'interrupted'
-                            ? 'border-amber-100 bg-amber-50/80'
-                            : 'border-emerald-100 bg-emerald-50/80'}`}>
+                            ? 'border-[var(--wb-warning)] bg-[var(--wb-warning-soft)]'
+                            : 'border-[var(--wb-success)] bg-[var(--wb-success-soft)]'}`}>
                         <div className="flex items-start justify-between gap-3">
                             <div className="flex items-start gap-2 min-w-0">
                                 {dedupeTask.status === 'running' ? (
-                                    <span className="mt-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+                                    <span className="mt-1 w-2 h-2 rounded-full bg-[var(--wb-primary)] animate-pulse shrink-0" />
                                 ) : (
                                     <span className="text-base leading-none mt-0.5 shrink-0">
                                         {dedupeTask.status === 'done' ? '✅' : '⚠️'}
@@ -1021,10 +1030,10 @@ const WorldbookApp: React.FC = () => {
                                 )}
                                 <div className="min-w-0">
                                     <div className={`text-xs font-bold ${dedupeTask.status === 'running'
-                                        ? 'text-indigo-700'
+                                        ? 'text-[var(--wb-primary)]'
                                         : dedupeTask.status === 'done'
-                                            ? 'text-emerald-700'
-                                            : 'text-amber-700'}`}>
+                                            ? 'text-[var(--wb-success)]'
+                                            : 'text-[var(--wb-warning)]'}`}>
                                         {dedupeTask.status === 'running'
                                             ? 'AI 深度检查正在后台运行'
                                             : dedupeTask.status === 'done'
@@ -1033,7 +1042,7 @@ const WorldbookApp: React.FC = () => {
                                                     ? '上次的 AI 深度检查被中断'
                                                     : 'AI 深度检查失败'}
                                     </div>
-                                    <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                                    <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--wb-text2)]">
                                         {dedupeTask.status === 'running'
                                             ? '退出世界书也会继续，完成后会弹出提醒；回来后点“查看进度”看当前状态。'
                                             : (dedupeTask.result?.replace(/^\[(ok|err|warn)\]/, '') ?? '点这里查看结果')}
@@ -1042,7 +1051,7 @@ const WorldbookApp: React.FC = () => {
                             </div>
                             <button
                                 onClick={openDedupePanel}
-                                className="shrink-0 rounded-xl bg-white/90 px-3 py-2 text-[11px] font-bold text-slate-600 border border-white shadow-sm active:scale-95 transition-transform hover:bg-white"
+                                className="shrink-0 rounded-[var(--wb-radius-input)] bg-[var(--wb-surface)] px-3 py-2 text-[11px] font-bold text-[var(--wb-text2)] border border-[var(--wb-border)] shadow-sm active:scale-95 transition-transform hover:bg-[var(--wb-surface)]"
                             >
                                 {dedupeTask.status === 'running' ? '查看进度' : '查看结果'}
                             </button>
@@ -1051,19 +1060,19 @@ const WorldbookApp: React.FC = () => {
                 )}
 
                 {dedupeMode && (
-                    <div id="worldbook-dedup-panel" className="rounded-2xl border border-slate-200/80 bg-white/85 backdrop-blur-md p-4 shadow-sm text-slate-600 animate-slide-up">
+                    <div id="worldbook-dedup-panel" className="rounded-[var(--wb-radius-card)] border border-[var(--wb-border)]/80 bg-[var(--wb-surface)] backdrop-blur-md p-4 shadow-sm text-[var(--wb-text2)] animate-slide-up">
                         <div className="flex items-start justify-between gap-3">
                             <div>
-                                <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                                    <MagnifyingGlass size={16} weight="bold" className="text-indigo-500" /> 世界书去重检测
+                                <div className="flex items-center gap-2 text-xs font-bold text-[var(--wb-text)]">
+                                    <MagnifyingGlass size={16} weight="bold" className="text-[var(--wb-primary)]" /> 世界书去重检测
                                 </div>
-                                <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                                    已选 <span className="font-bold text-indigo-600">{selectedDedupeBooks.length}</span> / {worldbooks.length} 本。快速检测只在本机运行；AI 深度检查会读取选中的正文，但不会自动删除或合并。
+                                <p className="mt-1 text-[11px] leading-relaxed text-[var(--wb-text2)]">
+                                    已选 <span className="font-bold text-[var(--wb-primary)]">{selectedDedupeBooks.length}</span> / {worldbooks.length} 本。快速检测只在本机运行；AI 深度检查会读取选中的正文，但不会自动删除或合并。
                                 </p>
                             </div>
                             <button
                                 onClick={toggleDedupeMode}
-                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center active:scale-90 transition-transform"
+                                className="w-8 h-8 rounded-full bg-[var(--wb-canvas)] text-[var(--wb-muted)] flex items-center justify-center active:scale-90 transition-transform"
                                 title="退出去重检测"
                             >
                                 <X size={16} weight="bold" />
@@ -1073,63 +1082,63 @@ const WorldbookApp: React.FC = () => {
                             <button
                                 onClick={selectAllForDedupe}
                                 disabled={isDedupeAiReviewing}
-                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                                className="py-2.5 rounded-[var(--wb-radius-input)] bg-[var(--wb-surface-alt)] text-[var(--wb-text2)] text-xs font-bold border border-[var(--wb-border)] active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
                                 全选
                             </button>
                             <button
                                 onClick={clearDedupeSelection}
                                 disabled={isDedupeAiReviewing}
-                                className="py-2.5 rounded-xl bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                                className="py-2.5 rounded-[var(--wb-radius-input)] bg-[var(--wb-surface-alt)] text-[var(--wb-text2)] text-xs font-bold border border-[var(--wb-border)] active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
                                 清空
                             </button>
                             <button
                                 onClick={runDedupeAnalysis}
                                 disabled={selectedDedupeBooks.length < 2 || isDedupeAiReviewing}
-                                className="py-2.5 rounded-xl bg-indigo-500 text-white text-xs font-bold shadow-sm shadow-indigo-200 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                                className="py-2.5 rounded-[var(--wb-radius-input)] bg-[var(--wb-primary)] text-white text-xs font-bold shadow-sm shadow-black/10 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                             >
                                 快速检测
                             </button>
                         </div>
 
-                        <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
+                        <div className="mt-4 rounded-[var(--wb-radius-card)] border border-[var(--wb-success)] bg-[var(--wb-success-soft)]/70 p-3">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                    <div className="text-xs font-black text-emerald-700">AI 深度检查</div>
-                                    <div className="mt-0.5 text-[10px] leading-relaxed text-emerald-700/70">
+                                    <div className="text-xs font-black text-[var(--wb-success)]">AI 深度检查</div>
+                                    <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--wb-success)]/70">
                                         想认真整理、确认哪些该合并或改标题时用这个。它会直接读选中的世界书正文，不受快速检测结果限制。
                                     </div>
                                 </div>
                                 <button
                                     onClick={runDedupeAiReview}
                                     disabled={selectedDedupeBooks.length < 2 || isDedupeAiReviewing}
-                                    className="shrink-0 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-white shadow-sm shadow-emerald-200 active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
+                                    className="shrink-0 rounded-[var(--wb-radius-input)] bg-[var(--wb-success)] px-3 py-2 text-xs font-bold text-white shadow-sm shadow-black/10 active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
                                 >
                                     {isDedupeAiReviewing ? '检查中…' : 'AI 深度检查'}
                                 </button>
                             </div>
                             {isDedupeAiReviewing && (
-                                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-[11px] leading-relaxed text-indigo-700">
-                                    <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse mr-1.5" />
+                                <div className="mt-3 rounded-[var(--wb-radius-input)] border border-[var(--wb-border)] bg-[var(--wb-primary-soft)]/80 px-3 py-2 text-[11px] leading-relaxed text-[var(--wb-primary)]">
+                                    <span className="inline-block w-2 h-2 rounded-full bg-[var(--wb-primary)] animate-pulse mr-1.5" />
                                     后台检查中… 退出世界书也会继续，完成后会弹出提醒。
                                 </div>
                             )}
                             {!isDedupeAiReviewing && dedupeTask.status !== 'idle' && dedupeTask.result && (
-                                <div className={`mt-3 rounded-xl border px-3 py-2 text-[11px] leading-relaxed ${dedupeTask.status === 'error' || dedupeTask.status === 'interrupted'
-                                    ? 'border-amber-100 bg-amber-50/80 text-amber-700'
-                                    : 'border-emerald-100 bg-emerald-50/80 text-emerald-700'}`}>
+                                <div className={`mt-3 rounded-[var(--wb-radius-input)] border px-3 py-2 text-[11px] leading-relaxed ${dedupeTask.status === 'error' || dedupeTask.status === 'interrupted'
+                                    ? 'border-[var(--wb-warning)] bg-[var(--wb-warning-soft)] text-[var(--wb-warning)]'
+                                    : 'border-[var(--wb-success)] bg-[var(--wb-success-soft)] text-[var(--wb-success)]'}`}>
                                     {dedupeTask.result.replace(/^\[(ok|err|warn)\]/, '')}
                                 </div>
                             )}
                             <div className="mt-3 space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <label className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700/60">使用的 API / 模型</label>
+                                    <label className="text-[9px] font-black uppercase tracking-[0.16em] text-[var(--wb-success)]/60">使用的 API / 模型</label>
                                     <button
                                         type="button"
                                         onClick={fetchDedupeModels}
                                         disabled={isLoadingDedupeModels}
-                                        className="text-[10px] font-bold text-emerald-600 active:scale-95 transition-transform disabled:opacity-50"
+                                        className="text-[10px] font-bold text-[var(--wb-success)] active:scale-95 transition-transform disabled:opacity-50"
                                     >
                                         {isLoadingDedupeModels ? '刷新中…' : '刷新模型列表'}
                                     </button>
@@ -1138,17 +1147,17 @@ const WorldbookApp: React.FC = () => {
                                     value={dedupeAiSelectedChoice.id}
                                     onChange={(event) => handleSelectDedupeAiChoice(event.target.value)}
                                     disabled={isDedupeAiReviewing}
-                                    className="w-full rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-bold text-emerald-800 outline-none disabled:opacity-60"
+                                    className="w-full rounded-[var(--wb-radius-input)] border border-[var(--wb-success)] bg-[var(--wb-surface)] px-3 py-2 text-[11px] font-bold text-[var(--wb-success)] outline-none disabled:opacity-60"
                                 >
                                     {dedupeAiApiChoices.options.map(option => (
                                         <option key={option.id} value={option.id}>{option.label}</option>
                                     ))}
                                 </select>
-                                <p className="text-[10px] leading-relaxed text-emerald-700/65">
+                                <p className="text-[10px] leading-relaxed text-[var(--wb-success)]/65">
                                     {dedupeAiSelectedChoice.helperText} 选完即保存，直接用于这次 AI 深检；想换随时回来改。会产生 API 用量，一次最多读取前 24 本，很多时建议按分组扫。
                                 </p>
                                 {!dedupeAiSelectedChoice.configured && (
-                                    <p className="text-[10px] leading-relaxed text-rose-500">
+                                    <p className="text-[10px] leading-relaxed text-[var(--wb-danger)]">
                                         当前选择缺 URL、Key 或模型，补齐后才能深度检查。
                                     </p>
                                 )}
@@ -1157,12 +1166,12 @@ const WorldbookApp: React.FC = () => {
                                         type="button"
                                         onClick={handleTestDedupeApi}
                                         disabled={testingDedupeApi || !dedupeAiSelectedChoice.configured}
-                                        className="shrink-0 rounded-xl border border-emerald-100 bg-white/90 px-3 py-2 text-[11px] font-bold text-emerald-700 active:scale-95 transition-transform disabled:opacity-50"
+                                        className="shrink-0 rounded-[var(--wb-radius-input)] border border-[var(--wb-success)] bg-[var(--wb-surface)] px-3 py-2 text-[11px] font-bold text-[var(--wb-success)] active:scale-95 transition-transform disabled:opacity-50"
                                     >
                                         {testingDedupeApi ? '测试中…' : '测试连接'}
                                     </button>
                                     {dedupeApiTestResult && (
-                                        <div className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-[10px] leading-relaxed ${dedupeApiTestResult.startsWith('[ok]') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                        <div className={`min-w-0 flex-1 rounded-[var(--wb-radius-input)] px-2.5 py-1.5 text-[10px] leading-relaxed ${dedupeApiTestResult.startsWith('[ok]') ? 'bg-[var(--wb-success-soft)] text-[var(--wb-success)]' : 'bg-[var(--wb-danger-soft)] text-[var(--wb-danger)]'}`}>
                                             {dedupeApiTestResult.replace(/^\[(ok|err)\]/, '')}
                                         </div>
                                     )}
@@ -1173,17 +1182,17 @@ const WorldbookApp: React.FC = () => {
                         {dedupeAnalysis && (
                             <div className="mt-4 space-y-3">
                                 <div className="grid grid-cols-3 gap-2">
-                                    <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
-                                        <div className="text-[9px] text-slate-400 font-bold uppercase">比较组合</div>
-                                        <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.comparedPairs}</div>
+                                    <div className="rounded-[var(--wb-radius-input)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] px-3 py-2">
+                                        <div className="text-[9px] text-[var(--wb-muted)] font-bold uppercase">比较组合</div>
+                                        <div className="text-base font-black text-[var(--wb-text)] mt-0.5">{dedupeAnalysis.comparedPairs}</div>
                                     </div>
-                                    <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
-                                        <div className="text-[9px] text-slate-400 font-bold uppercase">疑似重复</div>
-                                        <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.duplicatePairs}</div>
+                                    <div className="rounded-[var(--wb-radius-input)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] px-3 py-2">
+                                        <div className="text-[9px] text-[var(--wb-muted)] font-bold uppercase">疑似重复</div>
+                                        <div className="text-base font-black text-[var(--wb-text)] mt-0.5">{dedupeAnalysis.duplicatePairs}</div>
                                     </div>
-                                    <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
-                                        <div className="text-[9px] text-slate-400 font-bold uppercase">最高重复率</div>
-                                        <div className="text-base font-black text-slate-800 mt-0.5">{dedupeAnalysis.highestDuplicateRate}%</div>
+                                    <div className="rounded-[var(--wb-radius-input)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] px-3 py-2">
+                                        <div className="text-[9px] text-[var(--wb-muted)] font-bold uppercase">最高重复率</div>
+                                        <div className="text-base font-black text-[var(--wb-text)] mt-0.5">{dedupeAnalysis.highestDuplicateRate}%</div>
                                     </div>
                                 </div>
 
@@ -1197,13 +1206,13 @@ const WorldbookApp: React.FC = () => {
                                                     ? `${finding.bookA.title} ↔ ${finding.bookB.title}`
                                                     : review.findingId;
                                             return (
-                                                <div key={review.findingId} className="rounded-2xl border border-emerald-100 bg-white/90 p-4 shadow-sm">
+                                                <div key={review.findingId} className="rounded-[var(--wb-radius-card)] border border-[var(--wb-success)] bg-[var(--wb-surface)] p-4 shadow-sm">
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="min-w-0">
-                                                            <div className="text-sm font-black text-slate-800 truncate">
+                                                            <div className="text-sm font-black text-[var(--wb-text)] truncate">
                                                                 {reviewTitle}
                                                             </div>
-                                                            <div className="mt-1 text-[11px] leading-relaxed text-slate-600">{review.verdict}</div>
+                                                            <div className="mt-1 text-[11px] leading-relaxed text-[var(--wb-text2)]">{review.verdict}</div>
                                                         </div>
                                                         <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black ${DEDUPE_AI_RELATION_STYLES[review.relation]}`}>
                                                             {review.functionalOverlap}% · {DEDUPE_AI_RELATION_LABELS[review.relation]}
@@ -1211,7 +1220,7 @@ const WorldbookApp: React.FC = () => {
                                                     </div>
 
                                                     {review.mergeAdvice.length > 0 && (
-                                                        <div className="mt-3 rounded-xl bg-emerald-50/80 border border-emerald-100 px-3 py-2 text-[11px] leading-relaxed text-emerald-700">
+                                                        <div className="mt-3 rounded-[var(--wb-radius-input)] bg-[var(--wb-success-soft)] border border-[var(--wb-success)] px-3 py-2 text-[11px] leading-relaxed text-[var(--wb-success)]">
                                                             {review.mergeAdvice.map(advice => (
                                                                 <p key={advice} className="mb-1 last:mb-0">{advice}</p>
                                                             ))}
@@ -1219,29 +1228,29 @@ const WorldbookApp: React.FC = () => {
                                                     )}
 
                                                     {(review.functionCategory || review.reason || review.benefit) && (
-                                                        <div className="mt-3 grid gap-1.5 text-[11px] leading-relaxed text-slate-600">
+                                                        <div className="mt-3 grid gap-1.5 text-[11px] leading-relaxed text-[var(--wb-text2)]">
                                                             {review.functionCategory && (
-                                                                <p><span className="font-bold text-slate-700">归类：</span>{review.functionCategory}</p>
+                                                                <p><span className="font-bold text-[var(--wb-text)]">归类：</span>{review.functionCategory}</p>
                                                             )}
                                                             {review.reason && (
-                                                                <p><span className="font-bold text-slate-700">为什么改：</span>{review.reason}</p>
+                                                                <p><span className="font-bold text-[var(--wb-text)]">为什么改：</span>{review.reason}</p>
                                                             )}
                                                             {review.benefit && (
-                                                                <p><span className="font-bold text-slate-700">好处：</span>{review.benefit}</p>
+                                                                <p><span className="font-bold text-[var(--wb-text)]">好处：</span>{review.benefit}</p>
                                                             )}
                                                         </div>
                                                     )}
 
                                                     {review.keepAdvice && (
-                                                        <div className="mt-2 text-[11px] leading-relaxed text-slate-500">
-                                                            <span className="font-bold text-slate-700">保留建议：</span>{review.keepAdvice}
+                                                        <div className="mt-2 text-[11px] leading-relaxed text-[var(--wb-text2)]">
+                                                            <span className="font-bold text-[var(--wb-text)]">保留建议：</span>{review.keepAdvice}
                                                         </div>
                                                     )}
 
                                                     {review.needsHumanReview.length > 0 && (
                                                         <div className="mt-2 flex flex-wrap gap-1.5">
                                                             {review.needsHumanReview.map(item => (
-                                                                <span key={item} className="rounded-full bg-slate-50 border border-slate-100 px-2 py-1 text-[10px] text-slate-500">
+                                                                <span key={item} className="rounded-full bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] px-2 py-1 text-[10px] text-[var(--wb-text2)]">
                                                                     {item}
                                                                 </span>
                                                             ))}
@@ -1254,19 +1263,19 @@ const WorldbookApp: React.FC = () => {
                                 )}
 
                                 {dedupeAnalysis.findings.length === 0 ? (
-                                    <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-relaxed text-emerald-700">
+                                    <div className="rounded-[var(--wb-radius-input)] border border-[var(--wb-success)] bg-[var(--wb-success-soft)] px-4 py-3 text-xs leading-relaxed text-[var(--wb-success)]">
                                         快速检测未发现明显重复。它只是本地粗扫；如果上方 AI 深度检查有建议，以 AI 建议和你的人工判断为准。
                                     </div>
                                 ) : (
                                     <div className="space-y-3">
                                         {dedupeAnalysis.findings.map(finding => (
-                                            <div key={finding.id} className="rounded-2xl border border-white/80 bg-white/80 p-4 shadow-sm">
+                                            <div key={finding.id} className="rounded-[var(--wb-radius-card)] border border-[var(--wb-border)] bg-[var(--wb-surface)] p-4 shadow-sm">
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="min-w-0">
-                                                        <div className="text-sm font-black text-slate-800 truncate">
-                                                            {finding.bookA.title} <span className="text-slate-300">↔</span> {finding.bookB.title}
+                                                        <div className="text-sm font-black text-[var(--wb-text)] truncate">
+                                                            {finding.bookA.title} <span className="text-[var(--wb-muted)]">↔</span> {finding.bookB.title}
                                                         </div>
-                                                        <div className="mt-1 text-[11px] text-slate-500">{finding.verdict}</div>
+                                                        <div className="mt-1 text-[11px] text-[var(--wb-text2)]">{finding.verdict}</div>
                                                     </div>
                                                     <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black ${DEDUPE_SEVERITY_STYLES[finding.severity]}`}>
                                                         {finding.duplicateRate}% · {DEDUPE_SEVERITY_LABELS[finding.severity]}
@@ -1274,7 +1283,7 @@ const WorldbookApp: React.FC = () => {
                                                 </div>
                                                 <div className="mt-3 flex flex-wrap gap-1.5">
                                                     {finding.reasons.map(reason => (
-                                                        <span key={reason} className="rounded-full bg-slate-50 border border-slate-100 px-2 py-1 text-[10px] text-slate-500">
+                                                        <span key={reason} className="rounded-full bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] px-2 py-1 text-[10px] text-[var(--wb-text2)]">
                                                             {reason}
                                                         </span>
                                                     ))}
@@ -1282,17 +1291,17 @@ const WorldbookApp: React.FC = () => {
                                                 {finding.evidence.length > 0 && (
                                                     <div className="mt-3 space-y-2">
                                                         {finding.evidence.map((item, index) => (
-                                                            <div key={`${finding.id}-ev-${index}`} className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-[11px] leading-relaxed text-slate-600">
-                                                                <div className="text-[9px] font-bold text-indigo-500 uppercase mb-1">片段相似 {item.similarity}%</div>
+                                                            <div key={`${finding.id}-ev-${index}`} className="rounded-[var(--wb-radius-input)] bg-[var(--wb-surface-alt)] border border-[var(--wb-border)] p-3 text-[11px] leading-relaxed text-[var(--wb-text2)]">
+                                                                <div className="text-[9px] font-bold text-[var(--wb-primary)] uppercase mb-1">片段相似 {item.similarity}%</div>
                                                                 <div className="grid gap-2 sm:grid-cols-2">
                                                                     <div className="whitespace-pre-wrap break-words">{item.sourceText}</div>
-                                                                    <div className="whitespace-pre-wrap break-words text-slate-500">{item.targetText}</div>
+                                                                    <div className="whitespace-pre-wrap break-words text-[var(--wb-text2)]">{item.targetText}</div>
                                                                 </div>
                                                             </div>
                                                         ))}
                                                     </div>
                                                 )}
-                                                <div className="mt-3 rounded-xl bg-indigo-50/80 border border-indigo-100 px-3 py-2 text-[11px] leading-relaxed text-indigo-700">
+                                                <div className="mt-3 rounded-[var(--wb-radius-input)] bg-[var(--wb-primary-soft)]/80 border border-[var(--wb-border)] px-3 py-2 text-[11px] leading-relaxed text-[var(--wb-primary)]">
                                                     {finding.suggestions.map(suggestion => (
                                                         <p key={suggestion} className="mb-1 last:mb-0">{suggestion}</p>
                                                     ))}
@@ -1303,9 +1312,9 @@ const WorldbookApp: React.FC = () => {
                                 )}
 
                                 {dedupeAnalysis.cleanBookIds.length > 0 && (
-                                    <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[11px] leading-relaxed text-slate-500">
+                                    <div className="rounded-[var(--wb-radius-input)] border border-[var(--wb-border)] bg-[var(--wb-surface-alt)] px-4 py-3 text-[11px] leading-relaxed text-[var(--wb-text2)]">
                                         未卷入重复：
-                                        <span className="font-semibold text-slate-700">
+                                        <span className="font-semibold text-[var(--wb-text)]">
                                             {dedupeAnalysis.cleanBookIds.slice(0, 8).map(id => worldbookTitleById.get(id) || id).join('、')}
                                         </span>
                                         {dedupeAnalysis.cleanBookIds.length > 8 ? ` 等 ${dedupeAnalysis.cleanBookIds.length} 本` : ''}
@@ -1317,9 +1326,9 @@ const WorldbookApp: React.FC = () => {
                 )}
 
                 {Object.keys(groupedBooks).length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-4 opacity-60">
-                        <BookOpen size={48} className="text-slate-400" />
-                        <span className="text-xs font-medium">世界还是空白的...</span>
+                    <div className="flex flex-col items-center justify-center h-64 text-[var(--wb-muted)] gap-4 opacity-60">
+                        <BookOpen size={48} className="text-[var(--wb-muted)]" />
+                        <span className="wb-h text-xs font-medium">世界还是空白的...</span>
                     </div>
                 )}
 
@@ -1335,22 +1344,22 @@ const WorldbookApp: React.FC = () => {
                             className="flex items-center gap-2 py-2 px-1 cursor-pointer select-none group"
                         >
                             <div className={`transition-transform duration-300 ${expandedCategory === category ? 'rotate-90' : ''}`}>
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 group-hover:text-indigo-500"><path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" /></svg>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-[var(--wb-muted)] group-hover:text-[var(--wb-primary)]"><path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" /></svg>
                             </div>
-                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-indigo-600 transition-colors">{category}</h3>
-                            <span className="text-[9px] bg-white/50 px-1.5 rounded text-slate-400 border border-white/50">{books.length}</span>
+                            <h3 className="wb-h text-xs font-bold text-[var(--wb-text2)] uppercase tracking-wider group-hover:text-[var(--wb-primary)] transition-colors">{category}</h3>
+                            <span className="text-[9px] bg-[var(--wb-surface-alt)] px-1.5 rounded text-[var(--wb-muted)] border border-[var(--wb-border)]/50">{books.length}</span>
                             {dedupeMode && (
                                 <button
                                     onClick={(event) => toggleDedupeCategory(event, books)}
                                     disabled={isDedupeAiReviewing}
-                                    className="ml-auto px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/70 text-indigo-500 border border-indigo-100 active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                                    className="ml-auto px-2.5 py-1 rounded-full text-[10px] font-bold bg-[var(--wb-surface)] text-[var(--wb-primary)] border border-[var(--wb-border)] active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                                 >
                                     {books.every(book => selectedDedupeIds.has(book.id)) ? '取消本组' : '选本组'}
                                 </button>
                             )}
                             <button
                                 onClick={(event) => handleExportGroup(event, category, books)}
-                                className={`${dedupeMode ? '' : 'ml-auto'} p-2 -my-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white/70 active:scale-90 transition-all`}
+                                className={`${dedupeMode ? '' : 'ml-auto'} p-2 -my-2 rounded-full text-[var(--wb-muted)] hover:text-[var(--wb-primary)] hover:bg-[var(--wb-surface)] active:scale-90 transition-all`}
                                 title="导出该组为标准世界书"
                             >
                                 <DownloadSimple size={16} weight="bold" />
@@ -1360,7 +1369,7 @@ const WorldbookApp: React.FC = () => {
                         {/* Group Items */}
                         <div className={`space-y-3 pl-2 transition-all duration-300 ${expandedCategory === category ? 'opacity-100 mt-2' : 'max-h-0 opacity-0 overflow-hidden'}`}>
                             {pagedBooks.map(book => (
-                                <div key={book.id} className="bg-white/60 backdrop-blur-md rounded-2xl border border-white/60 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                                <div key={book.id} className="bg-[var(--wb-surface)] backdrop-blur-md rounded-[var(--wb-radius-card)] border border-[var(--wb-border)] shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
                                     {/* Item Header */}
                                     <div 
                                         onClick={() => dedupeMode ? toggleDedupeSelection(book.id) : isSelecting ? toggleBookSelection(book.id) : togglePreview(book.id)}
@@ -1371,7 +1380,7 @@ const WorldbookApp: React.FC = () => {
                                                 type="button"
                                                 onClick={(event) => { event.stopPropagation(); toggleDedupeSelection(book.id); }}
                                                 disabled={isDedupeAiReviewing}
-                                                className={`mt-0.5 w-6 h-6 rounded-full border flex items-center justify-center shrink-0 transition-all disabled:opacity-40 ${selectedDedupeIds.has(book.id) ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm shadow-indigo-200' : 'bg-white/80 border-slate-200 text-transparent'}`}
+                                                className={`mt-0.5 w-6 h-6 rounded-full border flex items-center justify-center shrink-0 transition-all disabled:opacity-40 ${selectedDedupeIds.has(book.id) ? 'bg-[var(--wb-primary)] border-[var(--wb-primary)] text-white shadow-sm shadow-black/10' : 'bg-[var(--wb-surface)] border-[var(--wb-border)] text-transparent'}`}
                                                 title={selectedDedupeIds.has(book.id) ? '取消选择' : '选择这本'}
                                             >
                                                 <Check size={13} weight="bold" />
@@ -1384,17 +1393,17 @@ const WorldbookApp: React.FC = () => {
                                         )}
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <div className={`w-1.5 h-1.5 rounded-full ${previewBookId === book.id ? 'bg-indigo-400' : 'bg-slate-300'}`}></div>
-                                                <h4 className={`text-sm font-bold truncate transition-colors ${previewBookId === book.id ? 'text-indigo-700' : 'text-slate-700'}`}>{book.title}</h4>
+                                                <div className={`w-1.5 h-1.5 rounded-full ${previewBookId === book.id ? 'bg-[var(--wb-primary)]' : 'bg-[var(--wb-muted)]'}`}></div>
+                                                <h4 className={`wb-h text-sm font-bold truncate transition-colors ${previewBookId === book.id ? 'text-[var(--wb-primary)]' : 'text-[var(--wb-text)]'}`}>{book.title}</h4>
                                             </div>
-                                            <div className="text-[10px] text-slate-400 font-mono pl-3.5">
+                                            <div className="text-[10px] text-[var(--wb-muted)] font-mono pl-3.5">
                                                 Updated: {new Date(book.updatedAt).toLocaleDateString()}
                                             </div>
                                             <div className="flex flex-wrap gap-1.5 mt-2 pl-3.5">
-                                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${book.disable ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-500'}`}>
+                                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${book.disable ? 'bg-[var(--wb-border)] text-[var(--wb-text2)]' : 'bg-[var(--wb-primary-soft)] text-[var(--wb-primary)]'}`}>
                                                     {book.disable ? '已停用' : (book.constant ?? !(book.key && book.key.length > 0)) ? '常驻' : '关键词'}
                                                 </span>
-                                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/70 text-slate-400">
+                                                <span className="text-[9px] px-2 py-0.5 rounded-full bg-[var(--wb-surface)] text-[var(--wb-muted)]">
                                                     {WORLDBOOK_POSITION_LABELS[book.position ?? 1]}
                                                 </span>
                                             </div>
@@ -1404,14 +1413,14 @@ const WorldbookApp: React.FC = () => {
                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleEdit(book); }} 
-                                                className="p-2 rounded-full hover:bg-white text-slate-400 hover:text-indigo-600 transition-colors"
+                                                className="p-2 rounded-full hover:bg-[var(--wb-surface)] text-[var(--wb-muted)] hover:text-[var(--wb-primary)] transition-colors"
                                                 title="编辑"
                                             >
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
                                             </button>
                                             <button 
                                                 onClick={(e) => requestDelete(e, book)} 
-                                                className="p-2 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors"
+                                                className="p-2 rounded-full hover:bg-[var(--wb-danger-soft)] text-[var(--wb-muted)] hover:text-[var(--wb-danger)] transition-colors"
                                                 title="删除"
                                             >
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
@@ -1423,9 +1432,9 @@ const WorldbookApp: React.FC = () => {
                                     {/* Expanded Content Preview */}
                                     {previewBookId === book.id && (
                                         <div className="px-4 pb-4 pt-0 animate-fade-in">
-                                            <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200 to-transparent mb-3"></div>
-                                            <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap font-light select-text">
-                                                {book.content || <span className="italic text-slate-400">暂无内容...</span>}
+                                            <div className="h-px w-full bg-gradient-to-r from-transparent via-[var(--wb-border)] to-transparent mb-3"></div>
+                                            <p className="text-xs text-[var(--wb-text2)] leading-relaxed whitespace-pre-wrap font-light select-text">
+                                                {book.content || <span className="italic text-[var(--wb-muted)]">暂无内容...</span>}
                                             </p>
                                         </div>
                                     )}
@@ -1438,15 +1447,15 @@ const WorldbookApp: React.FC = () => {
                                     <button
                                         onClick={() => setCategoryPage(category, currentPage - 1)}
                                         disabled={currentPage <= 1}
-                                        className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/70 border border-white/60 text-slate-500 shadow-sm active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                                        className="px-3 py-1.5 rounded-[var(--wb-radius-button)] text-xs font-bold bg-[var(--wb-surface)] border border-[var(--wb-border)] text-[var(--wb-text2)] shadow-sm active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                                     >
                                         上一页
                                     </button>
-                                    <span className="text-[11px] font-mono text-slate-400 min-w-[3rem] text-center">{currentPage} / {totalPages}</span>
+                                    <span className="text-[11px] font-mono text-[var(--wb-muted)] min-w-[3rem] text-center">{currentPage} / {totalPages}</span>
                                     <button
                                         onClick={() => setCategoryPage(category, currentPage + 1)}
                                         disabled={currentPage >= totalPages}
-                                        className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/70 border border-white/60 text-slate-500 shadow-sm active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                                        className="px-3 py-1.5 rounded-[var(--wb-radius-button)] text-xs font-bold bg-[var(--wb-surface)] border border-[var(--wb-border)] text-[var(--wb-text2)] shadow-sm active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
                                     >
                                         下一页
                                     </button>
@@ -1467,21 +1476,21 @@ const WorldbookApp: React.FC = () => {
                     <div className="flex gap-3 w-full">
                         <button
                             onClick={() => setShowImportConfirm(false)}
-                            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform"
+                            className="flex-1 py-3 bg-[var(--wb-canvas)] text-[var(--wb-text2)] font-bold rounded-[var(--wb-radius-card)] active:scale-95 transition-transform"
                         >
                             取消
                         </button>
                         <button
                             onClick={confirmImport}
-                            className="flex-1 py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200 active:scale-95 transition-transform hover:bg-indigo-600"
+                            className="flex-1 py-3 bg-[var(--wb-primary)] text-white font-bold rounded-[var(--wb-radius-card)] shadow-lg shadow-black/10 active:scale-95 transition-transform hover:bg-[var(--wb-primary-active)]"
                         >
                             确定
                         </button>
                     </div>
                 }
             >
-                <div className="py-3 text-sm text-slate-600 flex flex-col items-center gap-4">
-                    <div className="w-14 h-14 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 ring-8 ring-amber-50/50">
+                <div className="py-3 text-sm text-[var(--wb-text2)] flex flex-col items-center gap-4">
+                    <div className="w-14 h-14 bg-[var(--wb-warning-soft)] rounded-full flex items-center justify-center text-[var(--wb-warning)] ring-8 ring-[var(--wb-warning-soft)]">
                         <WarningCircle size={28} weight="fill" />
                     </div>
                     <p className="text-center leading-6">
@@ -1519,18 +1528,18 @@ const WorldbookApp: React.FC = () => {
                 onClose={() => setShowDeleteConfirm(false)}
                 footer={
                     <div className="flex gap-3 w-full">
-                        <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform">取消</button>
-                        <button onClick={confirmDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 active:scale-95 transition-transform">确认删除</button>
+                        <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-3 bg-[var(--wb-canvas)] text-[var(--wb-text2)] font-bold rounded-[var(--wb-radius-card)] active:scale-95 transition-transform">取消</button>
+                        <button onClick={confirmDelete} className="flex-1 py-3 bg-[var(--wb-danger)] text-white font-bold rounded-[var(--wb-radius-card)] shadow-lg shadow-black/10 active:scale-95 transition-transform">确认删除</button>
                     </div>
                 }
             >
-                <div className="text-center py-4 text-sm text-slate-600 flex flex-col items-center gap-3">
-                    <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-1">
+                <div className="text-center py-4 text-sm text-[var(--wb-text2)] flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 bg-[var(--wb-danger-soft)] rounded-full flex items-center justify-center text-[var(--wb-danger)] mb-1">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                     </div>
                     <div>
-                        确定要删除 <span className="font-bold text-slate-900">"{editingBook?.title}"</span> 吗？
-                        <br/><span className="text-xs text-red-400 opacity-80 mt-1 block">此操作无法撤销。</span>
+                        确定要删除 <span className="font-bold text-[var(--wb-text)]">"{editingBook?.title}"</span> 吗？
+                        <br/><span className="text-xs text-[var(--wb-danger)] opacity-80 mt-1 block">此操作无法撤销。</span>
                     </div>
                 </div>
             </Modal>
