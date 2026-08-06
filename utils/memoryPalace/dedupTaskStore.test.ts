@@ -13,10 +13,10 @@ describe('记忆宫殿去重全局任务状态的角色归属', () => {
             scope: scopeFor('char_a', 'A'),
             result: '开始扫描 A…',
         });
-        dedupTaskStore.set({ status: 'error', result: '[err]测试报错' });
-        dedupTaskStore.update(prev => ({ ...prev, progress: null }));
+        dedupTaskStore.setForChar('char_a', { status: 'error', result: '[err]测试报错' });
+        dedupTaskStore.updateForChar('char_a', prev => ({ ...prev, progress: null }));
 
-        const state = dedupTaskStore.get();
+        const state = dedupTaskStore.getForChar('char_a');
         expect(state.scope.charIds).toEqual(['char_a']);
         expect(state.scope.ownerName).toBe('A');
         expect(state.status).toBe('error');
@@ -25,7 +25,7 @@ describe('记忆宫殿去重全局任务状态的角色归属', () => {
         dedupTaskStore.reset();
     });
 
-    it('新任务会整体替换成新的角色归属，不残留旧角色的候选或结果', () => {
+    it('不同角色的去重任务互不影响，新任务不再覆盖其他角色未处理的候选', () => {
         dedupTaskStore.reset();
         dedupTaskStore.begin({
             mode: 'ai',
@@ -33,7 +33,10 @@ describe('记忆宫殿去重全局任务状态的角色归属', () => {
             aiApiSource: 'memoryPalace',
             result: '正在扫描 A…',
         });
-        dedupTaskStore.set({ status: 'review', preview: { scannedCount: 1, charCount: 1, groups: [], duplicateCount: 0 } });
+        dedupTaskStore.setForChar('char_a', {
+            status: 'review',
+            preview: { scannedCount: 1, charCount: 1, groups: [], duplicateCount: 0 },
+        });
 
         dedupTaskStore.begin({
             mode: 'semantic',
@@ -41,11 +44,36 @@ describe('记忆宫殿去重全局任务状态的角色归属', () => {
             result: '正在扫描 B…',
         });
 
-        const state = dedupTaskStore.get();
-        expect(state.scope.charIds).toEqual(['char_b']);
-        expect(state.mode).toBe('semantic');
-        expect(state.preview).toBeNull();
-        expect(state.result).toBe('正在扫描 B…');
+        const a = dedupTaskStore.getForChar('char_a');
+        const b = dedupTaskStore.getForChar('char_b');
+        expect(a.scope.charIds).toEqual(['char_a']);
+        expect(a.status).toBe('review');
+        expect(a.preview).not.toBeNull();
+        expect(b.scope.charIds).toEqual(['char_b']);
+        expect(b.mode).toBe('semantic');
+        expect(b.preview).toBeNull();
+        expect(b.result).toBe('正在扫描 B…');
+
+        dedupTaskStore.reset();
+    });
+
+    it('resetForChar 只清除该角色的任务，不影响其他角色', () => {
+        dedupTaskStore.reset();
+        dedupTaskStore.begin({
+            mode: 'exact',
+            scope: scopeFor('char_a', 'A'),
+            result: '正在扫描 A…',
+        });
+        dedupTaskStore.begin({
+            mode: 'exact',
+            scope: scopeFor('char_b', 'B'),
+            result: '正在扫描 B…',
+        });
+
+        dedupTaskStore.resetForChar('char_a');
+
+        expect(dedupTaskStore.getForChar('char_a').status).toBe('idle');
+        expect(dedupTaskStore.getForChar('char_b').status).toBe('running');
 
         dedupTaskStore.reset();
     });
