@@ -5,13 +5,6 @@ import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, 
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
-import {
-    DEFAULT_AUTO_SUMMARY_THRESHOLD,
-    MAX_AUTO_SUMMARY_THRESHOLD,
-    MIN_AUTO_SUMMARY_THRESHOLD,
-    getAutoSummaryThresholdHint,
-    normalizeAutoSummaryThreshold,
-} from '../../utils/memoryPalace';
 import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatContextRange';
 import { trackEvent } from '../../utils/analytics';
 interface ChatModalsProps {
@@ -134,14 +127,13 @@ interface ChatModalsProps {
     isAutoMemoryEnabled?: boolean;
     /** 在聊天设置里直接开启全自动记忆（需要 Embedding + 副 API 已配置） */
     onEnableAutoMemory?: () => void;
+    /** 跳到记忆宫殿，展开当前角色的「聊天记忆整理节奏」编辑器 */
+    onOpenMemoryPalaceRhythm?: () => void;
     isVectorizing?: boolean;
     /** 待处理条数（排除热区的真实缓冲区口径）：null=未算出/未开弹窗，0=已全同步 */
     vectorizePendingCount?: number | null;
     /** 处理中的逐轮进度文案，如「第 2 轮 · 剩余 340 条」 */
     vectorizeProgress?: string;
-    /** 自动总结触发条数（全局）：缓冲区达到该条数后自动处理 */
-    memoryPalaceAutoSummaryThreshold?: number;
-    onSaveMemoryPalaceAutoSummaryThreshold?: (threshold: number) => void;
     retainRecentForVectorize?: boolean;
     setRetainRecentForVectorize?: (value: boolean) => void;
     vectorizeResult?: {
@@ -266,8 +258,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
-    isMemoryPalaceEnabled, isAutoMemoryEnabled, onEnableAutoMemory, isVectorizing, vectorizePendingCount, vectorizeProgress,
-    memoryPalaceAutoSummaryThreshold, onSaveMemoryPalaceAutoSummaryThreshold, onForceVectorize,
+    isMemoryPalaceEnabled, isAutoMemoryEnabled, onEnableAutoMemory, onOpenMemoryPalaceRhythm, isVectorizing, vectorizePendingCount, vectorizeProgress,
+    onForceVectorize,
     retainRecentForVectorize, setRetainRecentForVectorize, vectorizeResult,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
@@ -280,19 +272,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const HISTORY_PAGE_SIZE = 50;
     const HISTORY_SEARCH_MAX = 200;
     const LONG_PRESS_MS = 450;
-    const normalizedAutoSummaryThreshold = normalizeAutoSummaryThreshold(
-        memoryPalaceAutoSummaryThreshold ?? DEFAULT_AUTO_SUMMARY_THRESHOLD,
-    );
-    const [autoSummaryThresholdInput, setAutoSummaryThresholdInput] = useState(String(normalizedAutoSummaryThreshold));
-
-    useEffect(() => {
-        setAutoSummaryThresholdInput(String(normalizedAutoSummaryThreshold));
-    }, [normalizedAutoSummaryThreshold]);
-
     const handleSaveSettings = () => {
-        const threshold = normalizeAutoSummaryThreshold(autoSummaryThresholdInput);
-        setAutoSummaryThresholdInput(String(threshold));
-        onSaveMemoryPalaceAutoSummaryThreshold?.(threshold);
         onSaveSettings();
     };
 
@@ -639,45 +619,26 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                      {isMemoryPalaceEnabled && onForceVectorize && (
                          <div className="pt-2 border-t border-slate-100">
                              <div className="mb-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
-                                 <div className="flex items-center justify-between gap-2 mb-2">
-                                     <label className="text-xs font-bold text-emerald-700 uppercase">自动总结触发条数</label>
-                                     <span className="text-[10px] text-emerald-700/70">当前 {autoSummaryThresholdInput} 条</span>
-                                 </div>
-                                 <input
-                                     type="range"
-                                     min={MIN_AUTO_SUMMARY_THRESHOLD}
-                                     max={MAX_AUTO_SUMMARY_THRESHOLD}
-                                     step={10}
-                                     value={autoSummaryThresholdInput}
-                                     onChange={e => setAutoSummaryThresholdInput(e.target.value)}
-                                     disabled={isAutoMemoryEnabled === false}
-                                     className="w-full h-2 bg-emerald-100 rounded-full appearance-none accent-emerald-500 disabled:opacity-40"
-                                 />
-                                 <div className="flex justify-between text-[10px] text-emerald-700/70 mt-1">
-                                     <span>{MIN_AUTO_SUMMARY_THRESHOLD} · 更快更新</span>
-                                     <span>{DEFAULT_AUTO_SUMMARY_THRESHOLD} · 默认</span>
-                                     <span>{MAX_AUTO_SUMMARY_THRESHOLD} · 更省调用</span>
-                                 </div>
-                                 <p className="text-[10px] text-emerald-800/70 mt-2 leading-relaxed">
-                                     {getAutoSummaryThresholdHint(autoSummaryThresholdInput)}
+                                 <label className="text-xs font-bold text-emerald-700 uppercase">自动整理节奏</label>
+                                 <p className="text-[10px] text-emerald-800/70 mt-1 leading-relaxed">
+                                     自动整理的节奏（AI 直接读最近多少条原文、攒多少条后开始整理）已改为在记忆宫殿里按角色设置。
                                  </p>
                                  {isAutoMemoryEnabled === false ? (
-                                     <p className="text-[10px] text-emerald-800/60 mt-1">
-                                         「全自动记忆」已关闭，滑条暂不生效；需要先开启全自动记忆，到阈值才会自动整理。
-                                         {onEnableAutoMemory && (
-                                             <button
-                                                 type="button"
-                                                 onClick={onEnableAutoMemory}
-                                                 className="ml-1 font-bold text-emerald-600 underline active:scale-95"
-                                             >
-                                                 点我开启全自动记忆
-                                             </button>
-                                         )}
-                                     </p>
+                                     <button
+                                         type="button"
+                                         onClick={onEnableAutoMemory}
+                                         className="mt-2 w-full py-2.5 bg-emerald-500 text-white font-bold rounded-xl active:scale-95 transition-transform"
+                                     >
+                                         点我开启全自动记忆
+                                     </button>
                                  ) : (
-                                     <p className="text-[10px] text-emerald-800/60 mt-1">
-                                         点底部「保存设置」后，下一次自动总结立即按这个条数判断。
-                                     </p>
+                                     <button
+                                         type="button"
+                                         onClick={onOpenMemoryPalaceRhythm}
+                                         className="mt-2 w-full py-2.5 bg-emerald-500 text-white font-bold rounded-xl active:scale-95 transition-transform"
+                                     >
+                                         去记忆宫殿调整节奏 →
+                                     </button>
                                  )}
                              </div>
                              <button

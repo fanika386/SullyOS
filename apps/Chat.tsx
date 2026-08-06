@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
@@ -16,6 +16,7 @@ import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
 import { formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
 import { getRoomLabel } from '../utils/memoryPalace/types';
+import { requestMemoryPalaceWaterlineFocus } from '../utils/memoryPalace/waterlineFocus';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
 import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
 import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
@@ -80,7 +81,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, resolveUserProfileForCharacter, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, remoteVectorConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, resolveUserProfileForCharacter, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -2167,6 +2168,13 @@ const Chat: React.FC = () => {
         addToast('已开启全自动记忆，聊天会自动整理进记忆宫殿', 'success');
     };
 
+    // 聊天设置「去记忆宫殿调整节奏」：打开记忆宫殿并直接展开当前角色的节奏编辑器。
+    const handleOpenMemoryPalaceRhythm = () => {
+        if (!char) return;
+        requestMemoryPalaceWaterlineFocus(char.id);
+        openApp(AppID.MemoryPalace);
+    };
+
     const handleForceVectorize = async () => {
         if (!char || !char.memoryPalaceEnabled || isVectorizing) return;
         const mpEmb = memoryPalaceConfig?.embedding;
@@ -3206,13 +3214,10 @@ const Chat: React.FC = () => {
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isAutoMemoryEnabled={!!(char as any).autoArchiveEnabled}
                 onEnableAutoMemory={handleEnableAutoMemory}
+                onOpenMemoryPalaceRhythm={handleOpenMemoryPalaceRhythm}
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}
                 vectorizeProgress={vectorizeProgress}
-                memoryPalaceAutoSummaryThreshold={memoryPalaceConfig.autoSummaryThreshold}
-                onSaveMemoryPalaceAutoSummaryThreshold={(threshold) => {
-                    updateMemoryPalaceConfig({ autoSummaryThreshold: threshold });
-                }}
                 retainRecentForVectorize={retainRecentForVectorize}
                 setRetainRecentForVectorize={setRetainRecentForVectorize}
                 vectorizeResult={vectorizeResult}

@@ -19,6 +19,7 @@ import {
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, ExactDuplicateMemoryPreview, AiDuplicateLLMConfig, AiMergedMemoryDraft, DedupMode } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
+import { consumeMemoryPalaceWaterlineFocus } from '../utils/memoryPalace/waterlineFocus';
 import { AppID, type Message, type CharacterProfile, type MemoryPalaceWaterlinePreset } from '../types';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import {
@@ -1048,6 +1049,15 @@ export default function MemoryPalaceApp() {
     const [autoArchiveSyncingId, setAutoArchiveSyncingId] = useState<string | null>(null);
     const [autoArchiveSyncProgress, setAutoArchiveSyncProgress] = useState('');
     const [waterlineEditorCharId, setWaterlineEditorCharId] = useState<string | null>(null);
+
+    // 从聊天设置「去记忆宫殿调整节奏」跳转过来时，自动选中目标角色并展开节奏编辑器。
+    useEffect(() => {
+        const focusCharId = consumeMemoryPalaceWaterlineFocus();
+        if (focusCharId) {
+            setActiveCharacterId(focusCharId);
+            setWaterlineEditorCharId(focusCharId);
+        }
+    }, []);
 
     // 全自动记忆追平确认弹窗（替代原生 confirm）
     const [autoArchiveConfirm, setAutoArchiveConfirm] = useState<{
