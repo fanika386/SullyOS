@@ -1312,6 +1312,28 @@ export async function applyAssistantPostProcessing(
     const xhsConf = resolveXhsConfig(char, realtimeConfig);
     const xhsCaps = xhsConf.capabilities;
 
+    /** XHS 空结果 / 没连上时的二次圆场：必须如实说明，绝不让模型拿第一轮编造内容当结果。 */
+    const xhsFallbackCall = async (reason: string, tagPattern: RegExp, purpose: string) => {
+        const cleaned = aiContent.replace(tagPattern, '').trim() || '让我看看小红书...';
+        const msgs = [
+            ...fullMessages,
+            { role: 'assistant', content: cleaned },
+            { role: 'user', content: `[系统: ${reason}。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 如实告诉用户实际情况，不要编造任何小红书笔记、标题、作者、赞数、评论或内容\n3. 继续正常聊天，用多条消息回复\n4. 严禁再输出该操作标记]` }
+        ];
+        try {
+            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST', headers,
+                body: JSON.stringify({ model: effectiveApi.model, messages: msgs, temperature: 0.8, max_tokens: 8000, stream: false })
+            }, 2, 0, { ...apiLogMeta, purpose });
+            updateTokenUsage(data, historyMsgCount, `xhs-${purpose}`);
+            aiContent = data.choices?.[0]?.message?.content || '';
+            aiContent = normalizeAiContent(aiContent);
+        } catch (fallbackErr) {
+            console.error('📕 [XHS] 圆场回复也失败了:', fallbackErr);
+            aiContent = aiContent.replace(tagPattern, '').trim();
+        }
+    };
+
     // [[XHS_SEARCH: 关键词]]
     const xhsSearchMatch = aiContent.match(/\[\[XHS_SEARCH:\s*(.+?)\]\]/);
     if (!skipSecondPassLLM && xhsSearchMatch && xhsConf.enabled && xhsCaps.search) {
@@ -1344,13 +1366,24 @@ export async function applyAssistantPostProcessing(
                 });
                 addToast(`📕 ${char.name}搜索了小红书: ${keyword}`, 'info');
             } else {
-                // xsr.reason === 'no_results' (not_enabled 已被外层 if 排除)
-                console.log('📕 [XHS] 搜索无结果:', xsr.message);
-                aiContent = aiContent.replace(xhsSearchMatch[0], '').trim();
+                // not_enabled 已被外层 if 排除; 这里只可能是 no_results / unreachable。
+                // 关键：不能只删标签把第一轮编造内容留下去——必须二次圆场说清楚真实情况。
+                console.log('📕 [XHS] 搜索无结果或未查成:', xsr.reason, xsr.message);
+                await xhsFallbackCall(
+                    xsr.reason === 'unreachable'
+                        ? `你想在小红书搜索「${keyword}」，但这次没连上、没查成（不知道到底有没有结果）`
+                        : `你在小红书搜索了「${keyword}」，但没有搜到任何笔记`,
+                    /\[\[XHS_SEARCH:.*?\]\]/g,
+                    '小红书搜索',
+                );
             }
         } catch (e) {
             console.error('📕 [XHS] 搜索异常:', e);
-            aiContent = aiContent.replace(xhsSearchMatch[0], '').trim();
+            await xhsFallbackCall(
+                `你想在小红书搜索「${keyword}」，但读取出了问题（可能是网络问题），这次没查成`,
+                /\[\[XHS_SEARCH:.*?\]\]/g,
+                '小红书搜索',
+            );
         }
         setXhsStatus('');
     } else if (!skipSecondPassLLM && xhsSearchMatch) {
@@ -1384,12 +1417,23 @@ export async function applyAssistantPostProcessing(
                 aiContent = normalizeAiContent(aiContent);
                 addToast(`📕 ${char.name}刷了会儿小红书`, 'info');
             } else {
-                // xbr.reason === 'no_results' (not_enabled 已被外层 if 排除)
-                aiContent = aiContent.replace(xhsBrowseMatch[0], '').trim();
+                // 同上：不能只删标签，必须二次圆场说清楚真实情况。
+                console.log('📕 [XHS] 浏览无结果或未查成:', xbr.reason, xbr.message);
+                await xhsFallbackCall(
+                    xbr.reason === 'unreachable'
+                        ? '你想刷小红书首页，但这次没连上、没查成（不知道到底有没有内容）'
+                        : '你刷了一会儿小红书首页，但没有刷到任何内容',
+                    /\[\[XHS_BROWSE(?::.*?)?\]\]/g,
+                    '小红书浏览',
+                );
             }
         } catch (e) {
             console.error('📕 [XHS] 浏览异常:', e);
-            aiContent = aiContent.replace(xhsBrowseMatch[0], '').trim();
+            await xhsFallbackCall(
+                '你想刷小红书首页，但读取出了问题（可能是网络问题），这次没查成',
+                /\[\[XHS_BROWSE(?::.*?)?\]\]/g,
+                '小红书浏览',
+            );
         }
         setXhsStatus('');
     } else if (!skipSecondPassLLM && xhsBrowseMatch) {
